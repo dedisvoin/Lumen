@@ -1,0 +1,118 @@
+#pragma once
+
+// Целочисленное значение
+final strict let Integer: Type =    i8 | i16 | i32 | i64;
+
+// Дробное значение
+final strict let Float: Type =      f16 | f32 | f64;
+
+//Число
+final strict let Numeric: Type =    Integer | Float;
+
+// Nullable тип
+#macro Nullable(T) { ?T }
+
+// Nullptr
+final strict let nullptr: *Null = ptr(0x0, null);
+
+fn get_type[T](value: T) -> Type  : {
+    ret T;
+}
+
+/* 
+Обёртка "compile-time" результата: значение и его тип.
+
+Возвращают функции, у которых результат известен на этапе компиляции,
+но при этом важен и его итоговый тип: abs/clamp/sqrt/pow из std/Math.lm,
+readln из std/Stream/Console.lm.
+
+`.value` — само значение, `.type` — его тип (Type). Обёртка прозрачно
+раскрывается там, где это ожидается:
+
+```lumen
+print({clamp(10, 0, 100)})    // печатает 100, а не object(CompileTime)
+typeof(CompileTime::from(42)) // i64 (раскрытие через __typeof__)
+```
+
+Это НЕ означает, что обёртка ведёт себя как обычное число во всех
+операциях: `clamp(...) + 1` — статическая ошибка, пишите `.value + 1`.
+*/
+struct[T] CompileTime {
+
+    /* 
+    Значение результата (str | T).
+
+    Для обёрток, созданных через `CompileTime::from[VT]()` без аргумента,
+    равно заглушке "CompileTime value": реальное значение подставит
+    нативная реализация (extern-стабы Math: abs, clamp, sqrt, pow). 
+    */
+    strict let value: str | T = "Comp-time value";
+    
+    /* 
+    Тип значения (Type). По умолчанию — generic-параметр T структуры;
+    при создании перекрывается типом аргумента или явным VT. Возвращается
+    оператором typeof(обёртка) и доступен напрямую как `.type`. 
+    */
+    strict let type: Type = T;
+    
+    /* 
+    Создаёт обёртку со значением; VT выводится из типа аргумента (или задаётся явно):
+
+    ```lumen
+    let a = CompileTime::from(10);     // CompileTime[i64], value = 10
+    let s = CompileTime::from("text"); // CompileTime[str], value = "text"
+    CompileTime::from[str](msg)        // тип str задан явно
+    ```
+    */
+    static fn from[VT](value: VT) -> CompileTime[VT]  : {
+        ret CompileTime[VT]{value: value};
+    }
+    
+    /* 
+    Создаёт обёртку БЕЗ значения: `.type` = VT, а `.value` остаётся заглушкой "CompileTime value". Нужна, когда важен только тип, а само значение подставит нативная реализация:
+
+    ```lumen
+    CompileTime::from[f64]()          // CompileTime[f64]
+
+    extern fn abs(x: Numeric) -> CompileTime[Numeric] {
+        CompileTime::from[typeof(x)]()   // тип x, значение заменит C++
+    }
+    ```
+    */
+    static fn from[VT]() -> CompileTime[VT]  : {
+        ret CompileTime[VT]{};
+    }
+    
+    /* 
+    Явное разворачивание оператором `?`: когда у значения есть метод `__get__`,
+    `a?` вызывает его и возвращает результат; если метода нет — возвращает сам
+    объект. Неявной автораспаковки нет.
+
+    ```lumen
+    let w = CompileTime::from(42);
+    echo w;          // 42 — печать сама показывает значение обёртки
+    echo w? + 1;     // 43 — арифметика требует явного разворачивания
+    echo w + 1;      // ошибка: нужна развёрнутая форма `w? + 1`
+    ```
+
+    Без `?` обёртка остаётся обёрткой: `w.value` и `w.type` дают поля
+    напрямую, а `typeof(w)` возвращает `.type` через `__typeof__`.
+    */
+    fn __get__(ref self) -> str | T  : {
+        ret self.value;
+    }
+    
+    /* 
+    Тип результата: оператор `typeof(обёртка)` возвращает `.type`.
+
+    ```lumen
+    typeof(CompileTime::from(42))        // i64
+    CompileTime::from[f64]().type        // f64 (поле напрямую)
+    ```
+    */
+    fn __typeof__(ref self) -> Type  : {
+        ret self.type;
+    }
+}
+
+

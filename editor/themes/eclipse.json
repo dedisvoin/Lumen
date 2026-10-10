@@ -1,0 +1,153 @@
+{
+  "name": "Eclipse",
+  "dark": true,
+  "colors": {
+    "background": "#161821",
+    "editor_background": "#161821",
+    "foreground": "#d4d0d4",
+    "caret": "#e8a87a",
+    "caret_line": "#20222e",
+    "selection": "#3a3a50",
+    "accent": "#7aaa7a",
+    "margin_background": "#161821",
+    "margin_foreground": "#5a5a6e",
+    "folding_background": "#161821",
+    "folding_foreground": "#5a5a6e",
+    "inlay_hint": "#5a5a6e",
+    "border": "#2a2a3a",
+    "menu_background": "#161821",
+    "menu_foreground": "#d4d0d4",
+    "brace_match_background": "#2a3a4a",
+    "brace_mismatch_background": "#c86a6a",
+    "error": "#c86a6a",
+    "warning": "#d4a84a"
+  },
+  "terminal": {
+    "black": "#262638",
+    "red": "#c86a6a",
+    "green": "#7aaa7a",
+    "yellow": "#d4a84a",
+    "blue": "#5a8aba",
+    "magenta": "#aa7aaa",
+    "cyan": "#5aaaaa",
+    "white": "#d4d0d4",
+    "bright_black": "#5a5a6e",
+    "bright_red": "#d88a7a",
+    "bright_green": "#8aba8a",
+    "bright_yellow": "#e0b85a",
+    "bright_blue": "#7aaad4",
+    "bright_magenta": "#c08ac0",
+    "bright_cyan": "#7acaca",
+    "bright_white": "#ece8ec"
+  },
+  "styles": {
+    "default": {
+      "color": "#d4d0d4",
+      "background": "#161821",
+      "font": "JetBrains Mono",
+      "size": 12,
+      "bold": false,
+      "italic": false
+    },
+    "keyword": {
+      "color": "#c08ac0",
+      "bold": true
+    },
+    "string": {
+      "color": "#7aaa7a"
+    },
+    "string_char": {
+      "color": "#7aaa7a"
+    },
+    "string_single": {
+      "color": "#7aaa7a"
+    },
+    "string_triple": {
+      "color": "#7aaa7a"
+    },
+    "string_tripledouble": {
+      "color": "#7aaa7a"
+    },
+    "number": {
+      "color": "#e8a87a"
+    },
+    "comment": {
+      "color": "#5a5a6e",
+      "italic": true
+    },
+    "commentline": {
+      "color": "#5a5a6e",
+      "italic": true
+    },
+    "commentdoc": {
+      "color": "#5a5a6e",
+      "italic": false
+    },
+    "commentlinedoc": {
+      "color": "#5a5a6e",
+      "italic": true
+    },
+    "commentblock": {
+      "color": "#5a5a6e",
+      "italic": true
+    },
+    "operator": {
+      "color": "#5aaaaa"
+    },
+    "preprocessor": {
+      "color": "#d88a7a"
+    },
+    "class_name": {
+      "color": "#5a8aba",
+      "bold": true
+    },
+    "namespace": {
+      "color": "#7aaad4"
+    },
+    "function_name": {
+      "color": "#d4a84a"
+    },
+    "variable": {
+      "color": "#d4d0d4"
+    },
+    "self": {
+      "color": "#7acaca"
+    },
+    "type": {
+      "color": "#5a8aba",
+      "bold": true
+    },
+  "type_parameter": {"color": "#c08ac0", "italic": true},
+    "modifier": {
+      "color": "#e8a87a",
+      "italic": true
+    },
+    "directive": {
+      "color": "#c86a6a"
+    },
+    "literal": {
+      "color": "#5a8aba"
+    },
+    "special": {
+      "color": "#d4a84a"
+    },
+    "escape": {
+      "color": "#c08ac0"
+    },
+    "define_macro": {
+      "color": "#d88a7a",
+      "underline": true
+    },
+    "comment_doc": {
+      "color": "#c08ac0",
+      "italic": false
+    },
+    "comment_question": {
+      "color": "#d4a84a",
+      "italic": true
+    },
+    "dunder_method": {
+      "color": "#c08ac0"
+    }
+  }
+}

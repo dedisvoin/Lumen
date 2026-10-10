@@ -1,0 +1,252 @@
+#pragma once
+
+#include "std/Typing.lm"
+#cppinclude "std/_Math.cpp"
+
+/*
+Число Пи (отношение длины окружности к диаметру).
+*/
+final strict const let PI: f64 = 3.14159265358979323846;
+
+/*
+Число Тау (2 * Пи).
+*/
+final strict const let TAU: f64 = 6.28318530717958647692;
+
+/*
+Основание натурального логарифма (число Эйлера).
+*/
+final strict const let E: f64 = 2.71828182845904523536;
+
+
+
+
+
+
+/*
+Максимум из двух чисел 
+(арифметическое сравнение).
+
+Может сравнивать только числовые типы
+```lumen
+let a = 10;
+let b = 3.14;
+echo max(a, b); // 10
+
+```
+
+```lumen
+const res = max(10000, 0); // res: 10000
+```
+*/
+fn max(const a: Numeric, const b: Numeric) -> Numeric  : {
+    ret if (a > b) { a } else { b };
+}
+
+/*
+Минимум из двух чисел 
+(арифметическое сравнение).
+
+Может сравнивать только числовые типы
+```lumen
+let a = 10;
+let b = 3.14;
+echo min(a, b); // 3.14
+
+```
+
+```lumen
+const res = min(10000, 0); // res: 0
+```
+*/
+fn min(const a: Numeric, const b: Numeric) -> Numeric  : {
+    ret if (a < b) { a } else { b };
+}
+
+/*
+Модуль (абсолютное значение) числа.
+
+```lumen
+echo abs(-5);    // 5
+echo abs(3.14);  // 3.14
+echo abs(0);     // 0
+```
+
+Возвращает:
+- то же число без знака; тип результата повторяет тип аргумента
+  (целое остаётся i64, дробное остаётся f64);
+- null — если аргумент отсутствует или не является числом.
+*/
+extern fn abs(x: Numeric) -> CompileTime[Numeric]  : { 
+    CompileTime::from[typeof(x)]() 
+};
+
+/*
+Зажимает число в диапазон [lo, hi].
+
+```lumen
+echo clamp(50, 0, 100);  // 50
+echo clamp(-5, 0, 100);  // 0
+echo clamp(150, 0, 100); // 100
+echo clamp(3.5, 0, 1);   // 1.0
+```
+
+Параметры:
+- x (i8 | i16 | i32 | i64 | f32 | f64) — зажимаемое число;
+- lo (i8 | i16 | i32 | i64 | f32 | f64) — нижняя граница;
+- hi (i8 | i16 | i32 | i64 | f32 | f64) — верхняя граница.
+
+Возвращает:
+- x, приведённое к диапазону; тип результата совпадает с типом x;
+- null — если аргументов меньше трёх или любой из них не число.
+*/
+extern fn clamp(x: Numeric, lo: Numeric, hi: Numeric) -> CompileTime[Numeric]  : { 
+    CompileTime::from[f64]() 
+};
+
+/*
+Знак числа: -1, 1 или 0.
+
+```lumen
+echo sign(-42); // -1
+echo sign(7);   // 1
+echo sign(0);   // 0
+```
+
+Возвращает:
+- i64: -1 (x < 0), 1 (x > 0), 0 (x == 0);
+- null — если аргумент отсутствует или не является числом.
+*/
+extern fn sign(x: Numeric) -> CompileTime[i64]  : { 
+    CompileTime::from[typeof(x)]()  
+};
+
+/*
+Квадратный корень.
+
+```lumen
+echo sqrt(16);    // 4.0
+echo sqrt(2);     // 1.4142135623730951
+```
+
+Возвращает:
+- f64 — корень из x (для отрицательных x — NaN);
+- null — если аргумент отсутствует или не является числом.
+*/
+extern fn sqrt(x: Numeric) -> CompileTime[f64]  : { 
+    CompileTime::from[typeof(x)]()  
+};
+
+/*
+Возведение в степень: base ^ exp.
+
+```lumen
+echo pow(2, 10);    // 1024.0
+echo pow(2, 0.5);   // 1.4142135623730951
+echo pow(81, 0.25); // 3.0
+```
+
+Возвращает:
+- f64 — base в степени exp;
+- null — если аргументов меньше двух или любой из них не число.
+*/
+extern fn pow(base: Numeric, exp: Numeric) -> CompileTime[f64]  : { 
+    CompileTime::from[typeof(base)]() 
+};
+
+/*
+Натуральный логарифм (по основанию e).
+
+```lumen
+echo ln(E);     // 1.0
+echo ln(1);     // 0.0
+```
+
+Возвращает:
+- f64 — логарифм x; для x <= 0 — NaN или -inf;
+- null — если аргумент отсутствует или не является числом.
+*/
+extern fn ln(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Десятичный логарифм (по основанию 10).
+
+```lumen
+echo log10(1000); // 3.0
+```
+*/
+extern fn log10(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Двоичный логарифм (по основанию 2).
+
+```lumen
+echo log2(8); // 3.0
+```
+*/
+extern fn log2(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Экспонента: e^x.
+
+```lumen
+echo exp(1); // 2.718281828459045
+```
+*/
+extern fn exp(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Округление вниз (к меньшему целому).
+
+```lumen
+echo floor(3.7);   // 3.0
+echo floor(-3.2);  // -4.0
+```
+*/
+extern fn floor(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Округление вверх (к большему целому).
+
+```lumen
+echo ceil(3.2);   // 4.0
+echo ceil(-3.7);  // -3.0
+```
+*/
+extern fn ceil(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Округление к ближайшему целому (половинки — вверх).
+
+```lumen
+echo round(2.4);  // 2.0
+echo round(2.5);  // 3.0
+echo round(-2.5); // -2.0
+```
+*/
+extern fn round(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Отбрасывание дробной части (округление к нулю).
+
+```lumen
+echo trunc(3.9);   // 3.0
+echo trunc(-3.9);  // -3.0
+```
+*/
+extern fn trunc(x: Numeric) -> f64  : { 0.0 };
+
+/*
+Остаток от деления (со знаком делимого).
+
+```lumen
+echo fmod(10, 3);   // 1.0
+echo fmod(-10, 3);  // -1.0
+echo fmod(7.5, 2);  // 1.5
+```
+
+Возвращает:
+- f64 — остаток от деления a на b;
+- null — если аргументов меньше двух или любой из них не число.
+*/
+extern fn fmod(a: Numeric, b: Numeric) -> f64  : { 0.0 };

@@ -1,0 +1,45 @@
+
+#pragma once
+
+struct _RafString {
+    strict let _ptr: *str = ptr(0x0, str);
+    strict let _size: i64 = 0;
+    
+    static fn alloc(_str: str, _size: i64) -> _RafString  : {
+        ret _RafString{_ptr: new <strict(str)> _str, _size: _size};
+    }
+}
+
+struct String {
+    strict {
+        let _str: _RafString;
+    }
+    
+    fn split(ref self, ref other: String)  : {
+        let _ = self._str._ptr;
+        self._str._ptr = other._str._ptr;
+        other._str._ptr = _;
+    }
+    
+    fn __add__(ref self, ref other: String) -> ref String  : {
+        *self._str._ptr += *other._str._ptr;
+        self._str._size += other._str._size;
+        ret self;
+    }
+    
+    fn __as__(ref self, to: Type) -> str  : {
+        assert to == str, "Error cast";
+        ret *self._str._ptr;
+    }
+ 
+    fn __sizeof__(ref self) -> i64  : {
+        ret self._size;
+    }
+    
+    static fn __call__(_str: str) -> String  : {
+        ret String{_str: _RafString::alloc(_str, sizeof(_str))};
+    }
+    
+   
+}
+

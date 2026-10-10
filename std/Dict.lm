@@ -1,0 +1,71 @@
+#pragma once
+
+#include "std/Pair.lm"
+
+
+struct[FirstT: Type, SecondT: Type] Dict {
+    strict let _container: Array[Pair[FirstT, SecondT]] = {};
+    strict let Self: Type = Dict[FirstT, SecondT];
+    
+    fn add(self: Self, id: FirstT, value: SecondT) -> Null  : {
+        self._container += {Pair::create(id, value)};
+    }
+    
+    fn size(self: Self) -> i64  : {
+        ret sizeof(self._container);
+    }
+    
+    fn clear(self: Self) -> Null  : {
+        self._container = {}; 
+    }
+
+    fn contain(self: Self, id: FirstT) -> bool  : {
+        for (let i = 0; i < sizeof(self._container); i++;) {
+            if (self._container[i].first == id) ret true;
+        }
+        ret false;
+    }
+    
+    
+    fn get_value_index(self: Self, id: FirstT) -> i64  : {
+        if (self.contain(id)) {
+            for (let i = 0; i < sizeof(self._container); i++;) {
+                if (self._container[i].first == id) ret i;
+            }
+        }
+        ret -1;
+    }
+    
+    fn __set_index__(self: Self, id: FirstT, value: SecondT) -> Null  : {
+        if (self.contain(id)) {
+            for (let i = 0; i < sizeof(self._container); i++;) {
+                if (self._container[i].first == id) {
+                    self._container[i].second = value;
+                    break;
+                }
+            } 
+        } else {
+            self.add(id, value);
+        }
+    }
+    
+    fn __get_index__(self: Self, id: FirstT) -> SecondT  : {
+        if (!self.contain(id)) assert false, "Dict not containe this key.";
+        
+        for (let i = 0; i < sizeof(self._container); i++;) {
+            if (self._container[i].first == id) {
+                ret self._container[i].second;
+            }
+        } 
+    }
+    
+    fn __sizeof__(self: Self) -> i64  : {
+        ret self.size();
+    }
+    
+    fn __del__(self: Self, id: FirstT) -> Null  : {
+        if (self.contain(id)) {
+            del self._container, self.get_index(id);
+        }
+    }
+}

@@ -1,0 +1,16 @@
+#cppinclude "std/Stream/_Iostream.cpp"
+
+/*
+Считывает данные с файла
+*/
+extern fn read_file(file_path: str) -> ?str;
+
+extern fn write_file(file_path: str, data: str) -> bool;
+
+extern fn file_exists(file_path: str) -> bool;
+
+extern fn append_file(file_path: str, data: str) -> bool;
+
+extern fn delete_file(file_path: str) -> bool;
+
+extern fn file_size(file_path: str) -> ?i64;

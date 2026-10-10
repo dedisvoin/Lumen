@@ -1,0 +1,39 @@
+#pragma once
+
+#include "std/Dict.lm"
+
+#macro DynEnum(name, args...) {
+    struct Enum {
+        strict let _container: Dict[i64, str] = Dict[i64, str]{};
+        
+        static fn enumStringToArray(string: str) -> Array[str]  : {
+            let colors_array: Array[str] = {};
+            let color: str = "";
+            for (let i = 0; i < sizeof(string); i++;) {
+                if (string[i] == ',') continue;
+                color += string[i];
+                if (string[i] == ' ') {
+                    colors_array += {color};
+                    color = "";
+                }
+            }
+            if (color!="") colors_array += {color};
+            ret colors_array;
+        }
+        
+        fn init(self: Enum, str_args: str) -> Null  : {
+            let r = Enum::enumStringToArray(str_args);
+            
+            for (let i = 0; i < sizeof(r); i++;) {
+                self._container.add(i, r[i]);
+            }
+        }
+        
+        fn __get_index__(self: Enum, i: i64) -> str  : {
+            ret self._container[i];
+        }
+    }
+
+    let name = Enum{};
+    name.init(@(args));
+}

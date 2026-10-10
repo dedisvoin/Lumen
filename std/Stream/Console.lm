@@ -1,0 +1,52 @@
+#include "std/Typing.lm"
+
+#pragma once
+
+/*
+Выводит значения в консоль.
+
+```lumen
+print({10, 20, 30});
+
+print({true, Null, i32 | f32}, :sep = 10, :end='-')
+```
+---
+Для того чтобы перегрузить эту функцию необходимо перегрузить оператор `out` в структуре.
+
+```lumen
+fn __out__(ref self) -> str | char {
+    ...
+}
+*/
+fn print(args: Array[auto], sep: str | char = ', ', end: str | char = '') -> Null  : {
+    strict let size_: i32 = sizeof(args) as i32;
+    for (let i: i64 = 0; i < size_; i++;) {
+        out args[i];
+        if (i != size_ - 1) out sep;
+    }
+    out end;
+}
+
+/*
+Выводит значения в консоль.
+
+```lumen
+println({10, 20, 30}); // 10, 20, 30
+
+println({true, Null, i32 | f32}, :sep = 10, :end='-') // true-Null-i32 | f32
+```
+---
+Для того чтобы перегрузить эту функцию необходимо перегрузить оператор `out` в структуре.
+
+```lumen
+fn __out__(ref self) -> str | char {
+    ...
+}
+*/
+fn println(args: Array[auto], sep: str | char = ', ') -> Null  : {
+    print(args, :sep = sep, :end = '\n')
+}
+
+fn readln(msg: str = "") -> CompileTime[str]  : {
+    ret CompileTime::from(input(msg));
+}

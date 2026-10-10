@@ -1,0 +1,151 @@
+{
+  "name": "Everforest Dark",
+  "dark": true,
+  "colors": {
+    "background": "#26323f",
+    "foreground": "#d3c6aa",
+    "caret": "#d3c6aa",
+    "caret_line": "#2d3c4d",
+    "selection": "#4a5a6a",
+    "margin_background": "#2d3c4d",
+    "margin_foreground": "#859289",
+    "folding_background": "#2d3c4d",
+    "folding_foreground": "#859289",
+    "inlay_hint": "#859289",
+    "border": "#4a5a6a",
+    "brace_match_background": "#66544e",
+    "brace_match_foreground": "#e6986c",
+    "brace_mismatch_background": "#e67e80",
+    "brace_mismatch_foreground": "#d3c6aa",
+    "accent": "#a7c080",
+    "error": "#e67e80",
+    "warning": "#e6986c",
+    "menu_background": "#3a4a5a",
+    "menu_foreground": "#d3c6aa"
+  },
+  "terminal": {
+    "black": "#26323f",
+    "red": "#e67e80",
+    "green": "#a7c080",
+    "yellow": "#e67e80",
+    "blue": "#dbbc7f",
+    "magenta": "#e6986c",
+    "cyan": "#7fbbb3",
+    "white": "#d3c6aa",
+    "bright_black": "#859289",
+    "bright_red": "#e67e80",
+    "bright_green": "#a7c080",
+    "bright_yellow": "#e67e80",
+    "bright_blue": "#dbbc7f",
+    "bright_magenta": "#dbbc7f",
+    "bright_cyan": "#7fbbb3",
+    "bright_white": "#ffffff"
+  },
+  "styles": {
+    "default": {
+      "color": "#d3c6aa",
+      "background": "#26323f",
+      "size": 11,
+      "bold": false,
+      "italic": false
+    },
+    "keyword": {
+      "color": "#e6986c"
+    },
+    "string": {
+      "color": "#a7c080"
+    },
+    "string_char": {
+      "color": "#a7c080"
+    },
+    "string_single": {
+      "color": "#a7c080"
+    },
+    "string_triple": {
+      "color": "#a7c080"
+    },
+    "string_tripledouble": {
+      "color": "#a7c080"
+    },
+    "number": {
+      "color": "#e67e80"
+    },
+    "comment": {
+      "color": "#859289",
+      "italic": true
+    },
+    "commentline": {
+      "color": "#859289",
+      "italic": true
+    },
+    "commentdoc": {
+      "color": "#859289",
+      "italic": false
+    },
+    "commentlinedoc": {
+      "color": "#859289",
+      "italic": true
+    },
+    "commentblock": {
+      "color": "#859289",
+      "italic": true
+    },
+    "operator": {
+      "color": "#e6986c"
+    },
+    "preprocessor": {
+      "color": "#e67e80"
+    },
+    "class_name": {
+      "color": "#7fbbb3",
+      "bold": true
+    },
+    "namespace": {
+      "color": "#7fbbb3"
+    },
+    "function_name": {
+      "color": "#dbbc7f"
+    },
+    "variable": {
+      "color": "#a7c080"
+    },
+    "self": {
+      "color": "#e67e80"
+    },
+    "type": {
+      "color": "#7fbbb3"
+    },
+  "type_parameter": {"color": "#e6986c", "italic": true},
+    "modifier": {
+      "color": "#e6986c",
+      "italic": true
+    },
+    "directive": {
+      "color": "#e67e80"
+    },
+    "literal": {
+      "color": "#e67e80"
+    },
+    "special": {
+      "color": "#e67e80"
+    },
+    "escape": {
+      "color": "#e67e80"
+    },
+    "define_macro": {
+      "color": "#596879",
+      "underline": true
+    },
+    "comment_doc": {
+      "color": "#e6986c",
+      "italic": false
+    },
+    "comment_question": {
+      "color": "#e6986c",
+      "italic": true
+    },
+    "dunder_method": {
+      "color": "#dbbc7f"
+    }
+  }
+}

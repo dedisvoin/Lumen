@@ -1,0 +1,154 @@
+{
+  "name": "Sakura",
+  "dark": false,
+  "colors": {
+    "background": "#fcf4f7",
+    "editor_background": "#fcf4f7",
+    "foreground": "#4a3b44",
+    "caret": "#e0688a",
+    "caret_line": "#fbeef3",
+    "selection": "#f3d8e1",
+    "accent": "#e082a0",
+    "margin_background": "#f8eef2",
+    "margin_foreground": "#c9b0ba",
+    "folding_background": "#f6e9ef",
+    "folding_foreground": "#c2a6b2",
+    "inlay_hint": "#c2abb6",
+    "border": "#eed6de",
+    "menu_background": "#faf0f4",
+    "menu_foreground": "#584751",
+    "brace_match_background": "#f6e0e8",
+    "brace_match_foreground": "#d97a97",
+    "brace_mismatch_background": "#f2c7cf",
+    "brace_mismatch_foreground": "#b84a66",
+    "error": "#d05771",
+    "warning": "#e2a34f"
+  },
+  "terminal": {
+    "black": "#453741",
+    "red": "#d96a7f",
+    "green": "#5aab7e",
+    "yellow": "#c8892e",
+    "blue": "#5f8fb0",
+    "magenta": "#be6cc2",
+    "cyan": "#5fb8a6",
+    "white": "#fdf9fb",
+    "bright_black": "#8a7580",
+    "bright_red": "#e5738c",
+    "bright_green": "#74d19e",
+    "bright_yellow": "#ecc77e",
+    "bright_blue": "#9ab8cc",
+    "bright_magenta": "#d3a0ce",
+    "bright_cyan": "#8fdcce",
+    "bright_white": "#ffffff"
+  },
+  "styles": {
+    "default": {
+      "color": "#4a3b44",
+      "background": "#fcf4f7",
+      "size": 11,
+      "bold": false,
+      "italic": false
+    },
+    "keyword": {
+      "color": "#e88ba6",
+      "bold": true,
+      "italic": true
+    },
+    "self": {
+      "color": "#d4758f"
+    },
+    "modifier": {
+      "color": "#c17897",
+      "italic": true
+    },
+    "escape": {
+      "color": "#b06096"
+    },
+    "special": {
+      "color": "#c0934f"
+    },
+    "directive": {
+      "color": "#c14a6e"
+    },
+    "number": {
+      "color": "#d9a08a"
+    },
+    "literal": {
+      "color": "#3f9d70"
+    },
+    "string": {
+      "color": "#9fd3a5"
+    },
+    "string_char": {
+      "color": "#8cc992"
+    },
+    "string_single": {
+      "color": "#7cbf87"
+    },
+    "string_triple": {
+      "color": "#8fd3c0"
+    },
+    "string_tripledouble": {
+      "color": "#6fc3b0"
+    },
+    "comment": {
+      "color": "#cbb4be",
+      "italic": true
+    },
+    "commentline": {
+      "color": "#c6aebb",
+      "italic": true
+    },
+    "commentdoc": {
+      "color": "#c2a8b6",
+      "italic": false
+    },
+    "commentlinedoc": {
+      "color": "#bca2b0",
+      "italic": true
+    },
+    "commentblock": {
+      "color": "#c9b1bb",
+      "italic": true
+    },
+    "comment_doc": {
+      "color": "#b89fae",
+      "italic": false
+    },
+    "comment_question": {
+      "color": "#c0a28a",
+      "italic": true
+    },
+    "operator": {
+      "color": "#a2939e"
+    },
+    "preprocessor": {
+      "color": "#c97a5a"
+    },
+    "class_name": {
+      "color": "#7ba3bf",
+      "bold": true
+    },
+    "namespace": {
+      "color": "#9aa8cc"
+    },
+    "type": {
+      "color": "#6f97b3"
+    },
+  "type_parameter": {"color": "#c17897", "italic": true},
+    "function_name": {
+      "color": "#a79ad2"
+    },
+    "variable": {
+      "color": "#7a6472"
+    },
+    "define_macro": {
+      "color": "#8f7aa0",
+      "underline": true
+    },
+    "dunder_method": {
+      "color": "#877cc4"
+    }
+  }
+}

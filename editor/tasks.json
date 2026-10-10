@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Build and Run",
+    "commands": "clang @AT_FILE -o @AT_FILE_NAME.exe\n@AT_FILE_NAME.exe\nCMD: del @AT_FILE_NAME.exe",
+    "type": "C++/C"
+  },
+  {
+    "name": "Run",
+    "commands": "python @AT_FILE",
+    "type": "Python"
+  },
+  {
+    "name": "Build Lumen Compiler",
+    "commands": "clang lumenc.cpp -o lumenc.exe",
+    "type": "Command"
+  },
+  {
+    "name": "Emit ASM",
+    "commands": "CMD: clang @AT_FILE -S -o @AT_FILE_NAME.asm\nOPEN: @AT_FILE_NAME.asm\nSLEEP: 1\nCMD: del @AT_FILE_NAME.asm",
+    "type": "C++/C"
+  },
+  {
+    "name": "Run Lumen (debug)",
+    "commands": "lumenc -f @AT_FILE -d -build\nout",
+    "type": "Other"
+  },
+  {
+    "name": "Emit LLVM",
+    "commands": "CMD: clang -S -emit-llvm -fno-discard-value-names @AT_FILE -o @AT_FILE_NAME.ll\nOPEN: @AT_FILE_NAME.ll\nSLEEP: 1\nCMD: del @AT_FILE_NAME.ll",
+    "type": "Command"
+  },
+  {
+    "name": "Run Lumen",
+    "commands": "lumenc -f @AT_FILE",
+    "type": "Other"
+  }
+]

@@ -1,0 +1,151 @@
+{
+  "name": "Emerald Forest",
+  "dark": true,
+  "colors": {
+    "background": "#182018",
+    "foreground": "#cfddcf",
+    "caret": "#f0f8f0",
+    "caret_line": "#2a302a",
+    "selection": "#3a443a",
+    "margin_background": "#1e241e",
+    "margin_foreground": "#6a746a",
+    "folding_background": "#1e241e",
+    "folding_foreground": "#6a746a",
+    "inlay_hint": "#6a746a",
+    "border": "#3a403a",
+    "brace_match_background": "#524b62",
+    "brace_match_foreground": "#c6a0f6",
+    "brace_mismatch_background": "#e68c8c",
+    "brace_mismatch_foreground": "#cfddcf",
+    "accent": "#c8d96c",
+    "error": "#e68c8c",
+    "warning": "#e2bf7a",
+    "menu_background": "#2a302a",
+    "menu_foreground": "#dfecdf"
+  },
+  "terminal": {
+    "black": "#182018",
+    "red": "#e68c8c",
+    "green": "#f5b88c",
+    "yellow": "#e2bf7a",
+    "blue": "#c8d96c",
+    "magenta": "#c6a0f6",
+    "cyan": "#7dc4e4",
+    "white": "#cfddcf",
+    "bright_black": "#6a746a",
+    "bright_red": "#e68c8c",
+    "bright_green": "#f5b88c",
+    "bright_yellow": "#e2bf7a",
+    "bright_blue": "#c8d96c",
+    "bright_magenta": "#c6a0f6",
+    "bright_cyan": "#7dc4e4",
+    "bright_white": "#ffffff"
+  },
+  "styles": {
+    "default": {
+      "color": "#cfddcf",
+      "background": "#182018",
+      "size": 11,
+      "bold": false,
+      "italic": false
+    },
+    "keyword": {
+      "color": "#c6a0f6"
+    },
+    "string": {
+      "color": "#f5b88c"
+    },
+    "string_char": {
+      "color": "#f5b88c"
+    },
+    "string_single": {
+      "color": "#f5b88c"
+    },
+    "string_triple": {
+      "color": "#f5b88c"
+    },
+    "string_tripledouble": {
+      "color": "#f5b88c"
+    },
+    "number": {
+      "color": "#e2bf7a"
+    },
+    "comment": {
+      "color": "#6a746a",
+      "italic": true
+    },
+    "commentline": {
+      "color": "#6a746a",
+      "italic": true
+    },
+    "commentdoc": {
+      "color": "#6a746a",
+      "italic": false
+    },
+    "commentlinedoc": {
+      "color": "#6a746a",
+      "italic": true
+    },
+    "commentblock": {
+      "color": "#6a746a",
+      "italic": true
+    },
+    "operator": {
+      "color": "#8a988a"
+    },
+    "preprocessor": {
+      "color": "#d99e6e"
+    },
+    "class_name": {
+      "color": "#6cc8b4",
+      "bold": true
+    },
+    "namespace": {
+      "color": "#6cc8b4"
+    },
+    "function_name": {
+      "color": "#c8d96c"
+    },
+    "variable": {
+      "color": "#9acc8c"
+    },
+    "self": {
+      "color": "#f5aa8c"
+    },
+    "type": {
+      "color": "#7dc4e4"
+    },
+  "type_parameter": {"color": "#c6a0f6", "italic": true},
+    "modifier": {
+      "color": "#b0a5f0",
+      "italic": true
+    },
+    "directive": {
+      "color": "#d99e6e"
+    },
+    "literal": {
+      "color": "#f5aa8c"
+    },
+    "special": {
+      "color": "#e68c8c"
+    },
+    "escape": {
+      "color": "#e68c8c"
+    },
+    "define_macro": {
+      "color": "#4a504a",
+      "underline": true
+    },
+    "comment_doc": {
+      "color": "#e2bf7a",
+      "italic": false
+    },
+    "comment_question": {
+      "color": "#e2bf7a",
+      "italic": true
+    },
+    "dunder_method": {
+      "color": "#c6a0f6"
+    }
+  }
+}
