@@ -19,3 +19,5 @@ build_input
 __pycache__
 .vscode
 .pytest_cache
+editor/sessions/session.json
+editor/settings.json
