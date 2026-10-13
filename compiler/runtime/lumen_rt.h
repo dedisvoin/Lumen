@@ -105,6 +105,10 @@ struct Box {
     // Резерв для чтения ns::member после выхода из функции, как parent-цепочка
     // интерпретатора. У обычных структур == nullptr (поле неактивно).
     std::shared_ptr<Ctx> scope;
+    // модификаторы ОБЪЯВЛЕНИЯ, переносимые значением: заполняется у ref-аргументов
+    // (ref-параметр), чтобы `mod(param, ref)` внутри функции видел модификаторы
+    // аргумента из места вызова. 0 у всех прочих значений.
+    long long mods = 0;
 
     static Box null()           { Box v; v.t = T_NULL; return v; }
     static Box i8 (long long x) { Box v; v.t = T_i8;  v.i = x; return v; }
@@ -136,6 +140,20 @@ struct Box {
 
 // невладеющий shared_ptr на существующую Box-ячейку (стабильна: узлы std::map не переезжают)
 static inline std::shared_ptr<Box> refcell_ptr(Box& b) { return std::shared_ptr<Box>(&b, [](Box*){}); }
+
+// --- модификаторы объявления, переносимые значением (для `mod(refParam, m)`) ---
+// Битовая раскладка ДОЛЖНА совпадать с компилятором (DeepAnalizer/CodeGenerator).
+static constexpr long long MOD_REF     = 1LL << 0;
+static constexpr long long MOD_STATIC  = 1LL << 1;
+static constexpr long long MOD_CONST   = 1LL << 2;
+static constexpr long long MOD_FINAL   = 1LL << 3;
+static constexpr long long MOD_STRICT  = 1LL << 4;
+static constexpr long long MOD_PRIVATE = 1LL << 5;
+static constexpr long long MOD_PUBLIC  = 1LL << 6;
+// пометить Box набором модификаторов объявления аргумента (используется на вызове ref-аргумента)
+static inline Box refmods(Box b, long long m) { b.mods = m; return b; }
+// проверка модификатора у значения, пришедшего в ref-параметр
+static inline bool mod_has(const Box& b, long long bit) { return (b.mods & bit) != 0; }
 
 // --- арена виртуальной памяти (зеркало VirtualHeap интерпретатора) -------------
 // new-ячейки получают последовательные адреса 0,1,2,…; ptr ± n сдвигает адрес,

@@ -515,6 +515,11 @@ struct ASTDeepAnalyzer {
                 ContextObject& co = context.get_variable(v->name);
                 nm->resolved = true;
                 nm->value = modifierFlag(co.modifiers, nm->modifier);
+                // ref-параметр: модификаторы принадлежат АРГУМЕНТУ в месте вызова,
+                // а не объявлению параметра (binding кладёт их в modifiers, а
+                // кодогенератор берёт их из mods переданного значения).
+                if (nm->modifier == "ref" && current_ref_params.count(v->name))
+                    nm->dynamic = true;
             }
             return;
         }
@@ -5792,8 +5797,15 @@ recv_value = execute(ma->l_node, context);
                         a = static_cast<struct NodeScope*>(a)->node;
                     if (a && a->type == NodeTypes::NodeVariable) {
                         String an = static_cast<struct NodeVariable*>(a)->name;
-                        if (context.has_variable(an))
+                        if (context.has_variable(an)) {
                             po.addr = context.get_variable(an).addr;
+                            // модификаторы ОБЪЯВЛЕНИЯ аргумента едут вместе с ref-параметром:
+                            // `mod(param, ref)` в теле отражает аргумент (`ref let b` -> true).
+                            // Только для обычных функций: у методов ref-аргументы кодогенератор
+                            // пока не переносит mods (держим паритет — там всегда false).
+                            if (!struct_method_call && context.get_variable(an).modifiers.Ref)
+                                po.modifiers.Ref = true;
+                        }
                     }
                 }
             }

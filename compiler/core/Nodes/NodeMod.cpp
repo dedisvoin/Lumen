@@ -11,6 +11,10 @@ struct NodeMod final: Node {
     Token token;
     bool resolved = false;
     bool value = false;
+    // true, если `expr` — ref-параметр: его модификаторы определяются аргументом
+    // в месте вызова, а не объявлением параметра. Кодогенератор в этом случае
+    // выдаёт не константу, а рантайм-проверку mods переданного значения.
+    bool dynamic = false;
     NodeMod(Node* expr, String modifier, Token token) :
         Node(NodeTypes::NodeMod, EX),
         expr(expr), modifier(modifier), token(token) {}

@@ -272,6 +272,18 @@ struct CodeGenUnit {
         return false;
     }
 
+    // бит модификатора для рантайм-проверки `mod(refParam, m)` (совпадает с lumen_rt.h)
+    static long long modBit(const String& name) {
+        if (name == String(U"ref"))     return 1LL << 0;
+        if (name == String(U"static"))  return 1LL << 1;
+        if (name == String(U"const"))   return 1LL << 2;
+        if (name == String(U"final"))   return 1LL << 3;
+        if (name == String(U"strict"))  return 1LL << 4;
+        if (name == String(U"private")) return 1LL << 5;
+        if (name == String(U"public"))  return 1LL << 6;
+        return 0;
+    }
+
     // Box&-ссылка на ячейку-носитель append-цели (зеркало writePathValue-путей):
     // переменная, параметр, путь полей, Ns::member, *p, a[i]... и их комбинации.
     String appendLvalueRef(Node* n) {
@@ -768,6 +780,18 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             }
             case NodeTypes::NodeMod: {
                 auto* n = static_cast<struct NodeMod*>(node);
+                // ref-параметр: модификаторы принадлежат аргументу и переносятся
+                // значением (rt::Box::mods) из места вызова — читаем их в рантайме.
+                if (n->dynamic) {
+                    Node* e = n->expr;
+                    while (e && e->type == NodeTypes::NodeScope)
+                        e = static_cast<struct NodeScope*>(e)->node;
+                    if (e && e->type == NodeTypes::NodeVariable) {
+                        String vn = static_cast<struct NodeVariable*>(e)->name;
+                        return "rt::Box::boo(rt::mod_has(" + vn + ", "
+                             + String(std::to_string(modBit(n->modifier))) + "LL))";
+                    }
+                }
                 // модификатор — свойство компиляционного времени; анализатор
                 // сохранил результат в узле, здесь выдаём константу.
                 return n->value ? "rt::Box::boo(true)" : "rt::Box::boo(false)";
@@ -2085,25 +2109,33 @@ case NodeTypes::NodeStructDeclaration:
             if (!fn) want_ref = true;
             if (want_ref && a && a->type == NodeTypes::NodeVariable) {
                 String nm = static_cast<struct NodeVariable*>(a)->name;
+                // модификаторы объявления аргумента едут в rt::Box::mods, чтобы
+                // `mod(refParam, ref)` в теле видел `ref let` источник.
+                // Внимание: ref-ПАРАМЕТР (`isCurRef`) свои mods уже несёт значением,
+                // его не помечаем — иначе терялась бы транзитивность (via(a) != true).
+                bool arg_ref = isRefVar(nm);
+                String ae;
                 if (isCurRef(nm)) {
-                    s += nm;  // C++-локальная ref-переменная (уже T_REF)
+                    ae = nm;  // C++-локальная ref-переменная (уже T_REF)
                 } else if (isRefVar(nm)) {
-                    s += envVar() + ".get(" + quote(nm) + ")"; // ref-ячейка в env (уже T_REF)
+                    ae = envVar() + ".get(" + quote(nm) + ")"; // ref-ячейка в env (уже T_REF)
                 } else if (isParam(nm)) {
-                    s += "rt::Box::rref(rt::refcell_ptr(" + nm + "))";   // C++-локаль
+                    ae = "rt::Box::rref(rt::refcell_ptr(" + nm + "))";   // C++-локаль
                 } else {
                     auto fit = fnRegistry.find(nm);
                     if (fit != fnRegistry.end() && !fit->second.empty()) {
                         if (fn) {
                             // имя функции как значение: своя ячейка (fns не лежат в env)
-                            s += "rt::Box::refcell(rt::Box::fn(&" + fit->second[0].cpp + "))";
+                            ae = "rt::Box::refcell(rt::Box::fn(&" + fit->second[0].cpp + "))";
                         } else {
-                            s += emitExpr(a);   // функция-значение: в env её нет
+                            ae = emitExpr(a);   // функция-значение: в env её нет
                         }
                     } else {
-                        s += "rt::Box::rref(rt::refcell_ptr(" + envVar() + ".get(" + quote(nm) + ")))";
+                        ae = "rt::Box::rref(rt::refcell_ptr(" + envVar() + ".get(" + quote(nm) + ")))";
                     }
                 }
+                if (arg_ref) ae = "rt::refmods(" + ae + ", rt::MOD_REF)";
+                s += ae;
                 continue;
             }
             if (want_ref && a) {
