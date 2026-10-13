@@ -103,6 +103,9 @@ struct CodeGenUnit {
     // РґРµС„РѕР»С‚РѕРІ РІ Р»РёС‚РµСЂР°Р»Р°С… (Р·РµСЂРєР°Р»Рѕ DeepAnalizer::materializeStruct).
     std::map<String, std::vector<std::pair<String, Node*>>> structFields;
     std::map<String, std::vector<std::pair<String, Node*>>> staticFields;
+    // объявленные типы полей: struct -> [(имя поля, type_node)] — для typeis(...) поля
+    // на generic-структурах (сохраняем реифицированный тип на инстансе в литерале).
+    std::map<String, std::vector<std::pair<String, Node*>>> structFieldTypes;
 
     // generic-РїР°СЂР°РјРµС‚СЂС‹ СЃС‚СЂСѓРєС‚СѓСЂС‹: РёРјСЏ СЃС‚СЂСѓРєС‚СѓСЂС‹ -> [РёРјРµРЅР° РїР°СЂР°РјРµС‚СЂРѕРІ] (РїРѕСЂСЏРґРѕРє РѕР±СЉСЏРІР»РµРЅРёСЏ).
     std::map<String, std::vector<String>> structGenerics;
@@ -137,8 +140,8 @@ struct CodeGenUnit {
     //   a: Root[T]      -> С‚РёРї "СЃР»РѕС‚Р°" T СЃС‚СЂСѓРєС‚СѓСЂС‹ Root: РїРѕР»Рµ Root, С‚РёРїРёР·РёСЂРѕРІР°РЅРЅРѕРµ
     //                      struct-РіРµРЅРµСЂР°Р№Р·РµСЂРѕРј СЃ С‚РѕР№ Р¶Рµ РїРѕР·РёС†РёРё (Root[T] -> РїРѕР»Рµ x)
     // Р’РѕР·РІСЂР°С‰Р°РµС‚ "" РµСЃР»Рё РїР°СЂР°РјРµС‚СЂ РЅРµ РЅР°Р№РґРµРЅ (РєР°СЃС‚ РѕСЃС‚Р°С‘С‚СЃСЏ С‚РѕР¶РґРµСЃС‚РІРµРЅРЅС‹Рј).
-    String genericArgCpp(const String& g, struct NodeFunctionDeclaration* fn) {
-        for (size_t i = 1; i < fn->params.size(); ++i) {
+    String genericArgCpp(const String& g, struct NodeFunctionDeclaration* fn, bool has_self = false) {
+        for (size_t i = has_self ? 1 : 0; i < fn->params.size(); ++i) {
             Node* t = fn->params[i].type;
             while (t && t->type == NodeTypes::NodeScope)
                 t = static_cast<struct NodeScope*>(t)->node;
@@ -742,8 +745,32 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             case NodeTypes::NodeTypeOf: {
                 auto* n = static_cast<struct NodeTypeOf*>(node);
                 if (n->has_static_type && !n->static_type_ambiguous)
-                    return "rt::Box::str(" + quote(n->static_type) + ")";
+                    // typeof/typeis оба дают type-значение (T_TYPE): так `typeof(x) == i64`
+                    // сравнивается с типовым литералом (Box::typ), а не со строкой.
+                    return "rt::Box::typ(" + quote(n->static_type) + ")";
+                // typeis поля на generic-структуре: узел неоднозначен (разные инстансы),
+                // но объявленный тип сохранён на самом инстансе -> читаем его в рантайме.
+                if (n->is_static) {
+                    Node* e = n->expr;
+                    while (e && e->type == NodeTypes::NodeScope)
+                        e = static_cast<struct NodeScope*>(e)->node;
+                    if (e && e->type == NodeTypes::NodeMemberAccess) {
+                        auto* ma = static_cast<struct NodeMemberAccess*>(e);
+                        Node* r = ma->r_node;
+                        while (r && r->type == NodeTypes::NodeScope)
+                            r = static_cast<struct NodeScope*>(r)->node;
+                        if (r && r->type == NodeTypes::NodeVariable)
+                            return "rt::field_decltype(" + emitExpr(ma->l_node) + ", "
+                                 + quote(static_cast<struct NodeVariable*>(r)->name) + ")";
+                    }
+                }
                 return "rt::typeof_dispatch(" + envVar() + ", " + emitExpr(n->expr) + ")";
+            }
+            case NodeTypes::NodeMod: {
+                auto* n = static_cast<struct NodeMod*>(node);
+                // модификатор — свойство компиляционного времени; анализатор
+                // сохранил результат в узле, здесь выдаём константу.
+                return n->value ? "rt::Box::boo(true)" : "rt::Box::boo(false)";
             }
             case NodeTypes::NodeUnaryBitwiseNot:
                 return "rt::unary_dispatch('~', " + envVar() + ", "
@@ -892,8 +919,35 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                         ++cnt;
                     }
                 }
+                // Объявленные типы generic-полей (для typeis(...) поля): вычисляем
+                // реифицированный тип поля в момент создания инстанса (curGenericVars
+                // уже содержит тип-аргументы литерала) и сохраняем его в структуре.
+                String decls;
+                {
+                    std::vector<String> stg;
+                    auto sgit2 = structGenerics.find(tn);
+                    if (sgit2 != structGenerics.end()) stg = sgit2->second;
+                    auto ftit = structFieldTypes.find(tn);
+                    if (ftit != structFieldTypes.end() && !stg.empty()) {
+                        for (auto& fp : ftit->second) {
+                            if (!fp.second) continue;
+                            bool usesGeneric = false;
+                            collectGenericTypeNames(fp.second, [&](const String& gn) {
+                                for (auto& gg : stg) if (gg == gn) { usesGeneric = true; break; }
+                            });
+                            if (!usesGeneric) continue;
+                            String val = emitExpr(fp.second);
+                            if (val.find(String(U"/* TBD")) != std::u32string::npos) continue;
+                            if (!decls.empty()) decls += ", ";
+                            decls += "{ " + quote(fp.first) + ", rt::typename_of(" + val + ") }";
+                        }
+                    }
+                }
                 curGenericVars = savedGen;
-                s += "})";
+                s += "}";
+                if (!decls.empty())
+                    s += ", std::map<std::string, std::string>{" + decls + "}";
+                s += ")";
                 return s;
             }
             case NodeTypes::NodeNew: {
@@ -937,7 +991,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             }
             case NodeTypes::NodeTupleType: {
                 auto* n = static_cast<struct NodeTupleType*>(node);
-                String s = "rt::Box::str(std::string(\"Tuple[\")";
+                String s = "rt::Box::typ(std::string(\"Tuple[\")";
                 for (size_t i = 0; i < n->types.size(); ++i) {
                     s += " + " + typeText(n->types[i]);
                     if (i + 1 == n->types.size()) s += " + \"]\"";
@@ -949,7 +1003,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             case NodeTypes::NodeArrayType: {
                 auto* n = static_cast<struct NodeArrayType*>(node);
                 if (!n->has_body)
-                    return "rt::Box::str(std::string(\"Array[\") + " + typeText(n->element_type) + " + \"]\")";
+                    return "rt::Box::typ(std::string(\"Array[\") + " + typeText(n->element_type) + " + \"]\")";
                 // `Array[T, N]{}` — пустой массив (длина 0), элементы не создаются.
                 if (n->items.empty())
                     return "rt::Box::arr(std::vector<rt::Box>{})";
@@ -973,7 +1027,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             }
             case NodeTypes::NodeFunctionType: {
                 auto* n = static_cast<struct NodeFunctionType*>(node);
-                String s = "rt::Box::str(std::string(\"Func[\")";
+                String s = "rt::Box::typ(std::string(\"Func[\")";
                 for (size_t i = 0; i < n->params.size(); ++i) {
                     if (i) s += " + \", \"";
                     s += " + " + typeText(n->params[i]);
@@ -1045,6 +1099,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             case NodeTypes::NodeArray:
             case NodeTypes::NodeArrayAccess:
             case NodeTypes::NodeSizeOf:
+            case NodeTypes::NodeMod:
             case NodeTypes::NodeCast:
             case NodeTypes::NodeFunctionCall:
             case NodeTypes::NodeLambda:
@@ -1580,6 +1635,7 @@ case NodeTypes::NodeStructDeclaration:
             case NodeTypes::NodeLambda: return "Lambda";
             case NodeTypes::NodeNew: return "New";
             case NodeTypes::NodeTypeOf: return "TypeOf";
+            case NodeTypes::NodeMod: return "Mod";
             case NodeTypes::NodeSizeOf: return "SizeOf";
             case NodeTypes::NodePtr: return "Ptr";
             case NodeTypes::NodeVariableDeclaration: return "VarDecl";
@@ -2124,6 +2180,15 @@ case NodeTypes::NodeStructDeclaration:
             case NodeTypes::NodeUnaryDereference:
                 collectGenericTypeNames(static_cast<struct NodeUnaryDereference*>(n)->node, cb);
                 break;
+            case NodeTypes::NodeUnaryNegation:
+                // `?T` (nullable-тип): обходим вложенный тип.
+                collectGenericTypeNames(static_cast<struct NodeUnaryNegation*>(n)->node, cb);
+                break;
+            case NodeTypes::NodeBinaryBitwiseOr:
+                // `A|B` (union-тип): обходим обе ветви.
+                collectGenericTypeNames(static_cast<struct NodeBinaryBitwiseOr*>(n)->l_node, cb);
+                collectGenericTypeNames(static_cast<struct NodeBinaryBitwiseOr*>(n)->r_node, cb);
+                break;
             case NodeTypes::NodeArrayType:
                 collectGenericTypeNames(static_cast<struct NodeArrayType*>(n)->element_type, cb);
                 break;
@@ -2267,6 +2332,7 @@ case NodeTypes::NodeStructDeclaration:
                         return;
                     }
                     fields.push_back({vd->name, vd->value_node});
+                    if (vd->type_node) structFieldTypes[full].push_back({vd->name, vd->type_node});
                     // generic-поле: тип поля содержит generic-имя структуры →
                     // запоминаем первое поле, типизированное этим параметром.
                     String fnme = vd->name;
@@ -2396,7 +2462,7 @@ case NodeTypes::NodeStructDeclaration:
         //       параметра (`CompileTime::from[VT](value)` -> VT = типу value).
         std::vector<String> underived;
         for (auto& gp : fn->generics)
-            if (!curGenericVars.count(gp.name) && genericArgCpp(gp.name, fn).empty())
+            if (!curGenericVars.count(gp.name) && genericArgCpp(gp.name, fn, !owner.empty()).empty())
                 underived.push_back(gp.name);
         String untypedDerive;
         if (underived.size() == 1)
@@ -2418,7 +2484,7 @@ case NodeTypes::NodeStructDeclaration:
             size_t hidx = fn->params.size() + gi;
             String idx = String(std::to_string(hidx));
             String cond = "args_.size() > " + idx + " && args_[" + idx + "].t != rt::Box::T_NULL";
-            String ld = genericArgCpp(gname, fn);
+            String ld = genericArgCpp(gname, fn, !owner.empty());
             String fall;
             if (!ld.empty()) fall = ld;
             else if (!underived.empty() && underived[0] == gname) fall = untypedDerive;
@@ -2439,7 +2505,7 @@ case NodeTypes::NodeStructDeclaration:
                 body = emitStmt(fn->body);
         }
         else if (fn->body)
-            body = "    return " + emitExpr(fn->body) + ";\n";
+            body = branchValue(fn->body);
         inFn = savedFn;
         curNs = savedNs;
         curReturnsRef = false;

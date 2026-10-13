@@ -211,6 +211,8 @@ struct EnumSymbol {
             }
             case NodeTypes::NodeTypeOf:
                 return deadBranchIsPure(static_cast<struct NodeTypeOf*>(n)->expr, depth + 1);
+            case NodeTypes::NodeMod:
+                return deadBranchIsPure(static_cast<struct NodeMod*>(n)->expr, depth + 1);
             case NodeTypes::NodePostfixUnwrap:
                 return deadBranchIsPure(static_cast<struct NodePostfixUnwrap*>(n)->node, depth + 1);
             case NodeTypes::NodeSizeOf:
@@ -265,6 +267,12 @@ struct ASTDeepAnalyzer {
     ControlFlow control_flow = ControlFlow::None;
     Value return_value = new_null();
     int loop_depth = 0;
+    // >0 — мы внутри ветки, статически недостижимой из-за охраны вида
+    // `typeof(x) == T` / `typeis(x) == T` (T не входит в статический тип x).
+    // В таких ветках `ret` не может нарушить контракт => RETURN_TYPE_MISMATCH
+    // не выдаём (зеркало их недостижимости; без этого generic-методы с
+    // рантайм-диспетчеризацией по typeof ложно падают).
+    int supp_ret_mismatch = 0;
     int iter_budget = 10000;        // РѕР±С‰РёР№ Р±СЋРґР¶РµС‚ РёС‚РµСЂР°С†РёР№ РЅР° РЅР°Р±РѕСЂ РІР»РѕР¶РµРЅРЅС‹С… С†РёРєР»РѕРІ
     bool budget_exhausted = false;
     int call_depth = 0;             // РіР»СѓР±РёРЅР° РІС‹Р·РѕРІРѕРІ С„СѓРЅРєС†РёР№ (Р·Р°С‰РёС‚Р° РѕС‚ Р±РµСЃРєРѕРЅРµС‡РЅРѕР№ СЂРµРєСѓСЂСЃРёРё)
@@ -440,6 +448,157 @@ struct ASTDeepAnalyzer {
         }
         if (def_out) *def_out = fd;
         return evalTypeExpr(fd->type_node, bind_ctx);
+    }
+
+    // Статический тип выражения для `typeis(...)` — симметрично `typeof`, но берётся
+    // объявленный (reified) тип, а не рантайм-тип значения:
+    //   * переменная/параметр -> ContextObject::wait_type (аннотация), иначе тип значения;
+    //   * поле структуры      -> объявленный тип поля с учётом генериков инстанса;
+    //   * иначе               -> тип значения (fallback, как у typeof).
+    Type staticTypeOfExpr(Node* e, Context& context) {
+        Node* n = e;
+        while (n && n->type == NodeTypes::NodeScope)
+            n = static_cast<struct NodeScope*>(n)->node;
+        if (n && n->type == NodeTypes::NodeVariable) {
+            auto* v = static_cast<struct NodeVariable*>(n);
+            if (context.has_variable(v->name)) {
+                ContextObject& co = context.get_variable(v->name);
+                if (co.ref_alias_node)
+                    return staticTypeOfExpr(co.ref_alias_node,
+                        co.ref_alias_ctx ? *co.ref_alias_ctx : context);
+                if (!(co.wait_type == Ty::Null) && !co.wait_type.is_auto)
+                    return co.wait_type;
+                return co.value.T;
+            }
+        }
+        if (n && n->type == NodeTypes::NodeMemberAccess) {
+            auto* ma = static_cast<struct NodeMemberAccess*>(n);
+            String field = memberNameNode(ma->r_node);
+            Value base = execute(ma->l_node, context);
+            if (base.T.isStruct() && !field.empty()) {
+                const StructSymbol* sym = structSymForType(base.T);
+                if (sym) {
+                    const StructFieldDef* fd = nullptr;
+                    Type ft = fieldTypeFor(*sym, base.T, field, &fd);
+                    if (fd && fd->type_node) return ft;
+                }
+            }
+        }
+        return execute(e, context).T;
+    }
+
+    // Значение модификатора по имени для набора флагов объявления.
+    static bool modifierFlag(const ContextObject::Modifiers& m, const String& name) {
+        if (name == "static")  return m.Static;
+        if (name == "const")   return m.Const;
+        if (name == "final")   return m.Final;
+        if (name == "strict")  return m.Strict;
+        if (name == "private") return m.Private;
+        if (name == "ref")     return m.Ref;
+        if (name == "public")  return !m.Private;
+        return false;
+    }
+
+    // mod(expr, modifier) — проверяет, установлен ли модификатор у объявления,
+    // на которое указывает expr (переменная или поле структуры). Результат
+    // компиляционного времени: сохраняется в узле для кодогенератора.
+    void resolveMod(struct NodeMod* nm, Context& context) {
+        nm->resolved = false;
+        nm->value = false;
+        Node* e = nm->expr;
+        while (e && e->type == NodeTypes::NodeScope)
+            e = static_cast<struct NodeScope*>(e)->node;
+        if (!e) return;
+        if (e->type == NodeTypes::NodeVariable) {
+            auto* v = static_cast<struct NodeVariable*>(e);
+            if (context.has_variable(v->name)) {
+                ContextObject& co = context.get_variable(v->name);
+                nm->resolved = true;
+                nm->value = modifierFlag(co.modifiers, nm->modifier);
+            }
+            return;
+        }
+        if (e->type == NodeTypes::NodeMemberAccess) {
+            auto* ma = static_cast<struct NodeMemberAccess*>(e);
+            String field = memberNameNode(ma->r_node);
+            Value base = execute(ma->l_node, context);
+            if (base.T.isStruct() && !field.empty()) {
+                const StructSymbol* sym = structSymForType(base.T);
+                if (sym) {
+                    for (const auto& f : sym->fields) {
+                        if (f.name == field) {
+                            nm->resolved = true;
+                            nm->value = modifierFlag(f.mods, nm->modifier);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    static bool typeMayBe(const Type& S, const Type& T) {
+        if (S.is_any || S.is_auto || T.is_any || T.is_auto) return true;
+        if (S.isUnion()) {
+            for (const auto& m : S.container_1)
+                if (m == T || (T << m)) return true;
+            return false;
+        }
+        if (S == T) return true;
+        if (T << S) return true;
+        if (S << T) return true;
+        return false;
+    }
+
+    // Разбор охраны `typeof(x) == T` / `typeis(x) == T` (и `!=`). Возвращает:
+    //   0 — обе ветки достижимы; 1 — ветка then статически недостижима;
+    //   2 — ветка else статически недостижима.
+    int deadBranchByTypeGuard(Node* cond, Context& context) {
+        auto unwrap = [](Node* n) {
+            while (n && n->type == NodeTypes::NodeScope)
+                n = static_cast<struct NodeScope*>(n)->node;
+            return n;
+        };
+        Node* c = unwrap(cond);
+        if (!c) return 0;
+        bool neg = false;
+        Node *l = nullptr, *r = nullptr;
+        if (c->type == NodeTypes::NodeBinaryEqual) {
+            l = static_cast<struct NodeBinaryEqual*>(c)->l_node;
+            r = static_cast<struct NodeBinaryEqual*>(c)->r_node;
+        } else if (c->type == NodeTypes::NodeBinaryNotEqual) {
+            neg = true;
+            l = static_cast<struct NodeBinaryNotEqual*>(c)->l_node;
+            r = static_cast<struct NodeBinaryNotEqual*>(c)->r_node;
+        } else {
+            return 0;
+        }
+        l = unwrap(l); r = unwrap(r);
+        Node* te = nullptr;   // typeof/typeis
+        Node* ty = nullptr;   // тип-выражение
+        if (l && l->type == NodeTypes::NodeTypeOf) { te = l; ty = r; }
+        else if (r && r->type == NodeTypes::NodeTypeOf) { te = r; ty = l; }
+        else return 0;
+        if (!ty) return 0;
+        auto* tn = static_cast<struct NodeTypeOf*>(te);
+        Type S = staticTypeOfExpr(tn->expr, context);
+        // Тип-выражение справа: сперва как значение (builtin-имена/генерики
+        // резолвятся через execute), иначе — статический разбор типа.
+        Type T = Ty::Any;
+        {
+            Value tv = execute(ty, context);
+            if (tv.T == Ty::Type_) T = tv.get<Type>();
+            else T = evalTypeExpr(ty, context);
+        }
+        if (S.is_any || S.is_auto || T.is_any || T.is_auto) return 0;
+        bool possible = tn->is_static ? (S == T) : typeMayBe(S, T);
+        bool strictEqual = !S.isUnion() && (S == T);
+        bool thenDead, elseDead;
+        if (!neg) { thenDead = !possible; elseDead = strictEqual; }
+        else      { thenDead = strictEqual; elseDead = !possible; }
+        if (thenDead) return 1;
+        if (elseDead) return 2;
+        return 0;
     }
 
     ASTDeepAnalyzer(AbstractTreeT ast, ErrorContainer& error_container) :
@@ -3660,13 +3819,6 @@ case NodeTypes::NodeUnaryPlus: {
                     }
                 } // иначе result = left.T: левая не nullable, '??' ничего не меняет
 
-                if (!result.is_any && !result.is_auto && !right.T.is_any && !right.T.is_auto
-                        && !(result << right.T)) {
-                    error_container.addError(DEEP_ERRORS::NULL_COALESCE_TYPE_MISMATCH(
-                        nc->start, nc->end, left.T.toString(), right.T.toString(), result.toString()));
-                    return new_null();
-                }
-
                 // Значение на этапе анализа: null слева -> берём правую, иначе оставляем левую.
                 if (left_is_null || left.raw().type() == typeid(Null)) return right;
                 return Value(result, left.raw());
@@ -4556,15 +4708,33 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
 Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                 Node* dead_branch  = taken ? if_node->else_body : if_node->then_body;
 
+                // Статически недостижимая ветка по охране `typeof(x) == T`
+                // (T не входит в статический тип x): её `ret` не проверяем на
+                // соответствие типу возврата — ветка всё равно не исполняется.
+                int guardDead = deadBranchByTypeGuard(if_node->condition, context);
+                auto branchSuppressed = [&](Node* br) -> bool {
+                    if (!br) return false;
+                    if (br == if_node->then_body && guardDead == 1) return true;
+                    if (br == if_node->else_body && guardDead == 2) return true;
+                    return false;
+                };
+
                 // взятая ветка — исполняем по-настоящему (эффекты и подсказки сохраняются);
                 // if в выражении (`let a = if (c) { 0 } else { 1 };`) отдаёт значение ветки
                 Value result = new_null();
-                if (real_branch) result = execute(real_branch, context);
+                if (real_branch) {
+                    int add = branchSuppressed(real_branch) ? 1 : 0;
+                    supp_ret_mismatch += add;
+                    result = execute(real_branch, context);
+                    supp_ret_mismatch -= add;
+                }
 
                 // РЅРµРІР·СЏС‚Р°СЏ РІРµС‚РєР° вЂ” В«СЃСѓС…РѕР№В» РїСЂРѕРіРѕРЅ: СЃРѕР±РёСЂР°РµРј РѕС€РёР±РєРё, РЅРѕ РЅРµ СЃРѕС…СЂР°РЅСЏРµРј
                 // СЌС„С„РµРєС‚С‹ (scope / inlay / heap / aborted / СѓРїСЂР°РІР»РµРЅРёРµ РїРѕС‚РѕРєРѕРј), С‡С‚РѕР±С‹
                 // РЅРµ РїР»РѕРґРёС‚СЊ РјС‘СЂС‚РІС‹Рµ РїРµСЂРµРјРµРЅРЅС‹Рµ Рё РЅРµ В«РїСЂРѕС‚РµРєР°Р»РёВ» break/continue/return
                 if (dead_branch) {
+                    int saved_supp = supp_ret_mismatch;
+                    if (branchSuppressed(dead_branch)) ++supp_ret_mismatch;
                     // Чистая мёртвая ветка (только чтение / арифметика / сравнение /
                     // return / break — не пишет ни в контекст, ни в кучу, не вызывает
                     // функции) исполняется «всухую» прямо на живом контексте без копии:
@@ -4613,6 +4783,7 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     iter_budget = saved_budget;
                     budget_exhausted = saved_budget_exhausted;
                     }
+                    supp_ret_mismatch = saved_supp;
                 }
                 return result;
             }
@@ -4718,7 +4889,8 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                 // resolved_calls к этому моменту содержит декларацию вызова.
                 if (!current_returns_ref && r->expr && exprIsLiveRef(r->expr, context))
                     error_container.addError(DEEP_ERRORS::VALUE_RETURNS_REF(r->token));
-                if (!current_ret_type.is_auto && !current_ret_type.is_any && !(current_ret_type << rv.T))
+                if (supp_ret_mismatch == 0
+                        && !current_ret_type.is_auto && !current_ret_type.is_any && !(current_ret_type << rv.T))
                     error_container.addError(DEEP_ERRORS::RETURN_TYPE_MISMATCH(
                         r->token, current_ret_type.toString(), rv.T.toString()));
                 // указатель на локаль этой функции уходить наружу не должен (P2):
@@ -4733,6 +4905,19 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
 
             case NodeTypes::NodeTypeOf: {
                 auto* t = static_cast<struct NodeTypeOf*>(node);
+                if (t->is_static) {
+                    // typeis(...) — статический (объявленный) тип как Type-значение.
+                    Type st = staticTypeOfExpr(t->expr, context);
+                    Value result = new_type(st);
+                    String repr = formatValue(result);
+                    if (!t->has_static_type) {
+                        t->static_type = repr;
+                        t->has_static_type = true;
+                    } else if (t->static_type != repr) {
+                        t->static_type_ambiguous = true;
+                    }
+                    return result;
+                }
                 // объект без автораспаковки: __typeof__ диспетчится на самой обёртке
                 Value v = execute(t->expr, context);
                 std::vector<Value> empty_args;
@@ -4748,6 +4933,12 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     t->static_type_ambiguous = true;
                 }
                 return result;
+            }
+
+            case NodeTypes::NodeMod: {
+                auto* m = static_cast<struct NodeMod*>(node);
+                resolveMod(m, context);
+                return new_bool(m->value);
             }
 
             case NodeTypes::NodeSizeOf: {
@@ -4976,6 +5167,7 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
         if (t == Ty::Bool) return new_bool(false);
         if (t == Ty::Char) return new_char(0);
         if (t == Ty::Str)  return new_string(String());
+        if (t.isStruct())  return new_struct(t, {});
         return new_null();
     }
 
@@ -5498,8 +5690,10 @@ recv_value = execute(ma->l_node, context);
         bool saved_ref_write_armed = ref_write_armed;
         Value saved_ref_write_val = ref_write_val;
         struct NodeFunctionCall* saved_ref_write_rcall = ref_write_rcall;
+        int saved_supp_ret = supp_ret_mismatch;
         control_flow = ControlFlow::None;
         loop_depth = 0;
+        supp_ret_mismatch = 0;   // охрана «мёртвой» ветки не действует внутри вызванной функции
         current_ret_type = fn.return_type ? rc.return_type : Ty::Any;
         current_returns_ref = fn.returns_ref;
         // имена ref-параметров — в теле это живые ссылки: `ret <такой параметр>`
@@ -5773,6 +5967,7 @@ recv_value = execute(ma->l_node, context);
         loop_depth = saved_loop;
         iter_budget = saved_budget;
         budget_exhausted = saved_budget_exhausted;
+        supp_ret_mismatch = saved_supp_ret;
         current_ret_type = saved_ret_type;
         current_returns_ref = saved_cur_ret_ref;
         current_ref_params = saved_ref_params;

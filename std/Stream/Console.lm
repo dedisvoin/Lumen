@@ -2,6 +2,7 @@
 
 #pragma once
 
+final namespace Console {
 /*
 Выводит значения в консоль.
 
@@ -18,14 +19,14 @@ fn __out__(ref self) -> str | char {
     ...
 }
 */
-fn print(args: Array[auto], sep: str | char = ', ', end: str | char = '') -> Null  : {
-    strict let size_: i32 = sizeof(args) as i32;
-    for (let i: i64 = 0; i < size_; i++;) {
-        out args[i];
-        if (i != size_ - 1) out sep;
+    fn print(args: Array[auto], sep: str | char = ', ', end: str | char = '') -> Null  : {
+        strict let size_: i32 = sizeof(args) as i32;
+        for (let i: i64 = 0; i < size_; i++;) {
+            out args[i];
+            if (i != size_ - 1) out sep;
+        }
+        out end;
     }
-    out end;
-}
 
 /*
 Выводит значения в консоль.
@@ -43,10 +44,11 @@ fn __out__(ref self) -> str | char {
     ...
 }
 */
-fn println(args: Array[auto], sep: str | char = ', ') -> Null  : {
-    print(args, :sep = sep, :end = '\n')
-}
+    fn println(args: Array[auto], sep: str | char = ', ') -> Null  : {
+        print(args, :sep = sep, :end = '\n')
+    }
 
-fn readln(msg: str = "") -> CompileTime[str]  : {
-    ret CompileTime::from(input(msg));
+    fn readln(msg: str = "") -> CompileTime[str]  : {
+        ret CompileTime::from(input(msg));
+    }
 }

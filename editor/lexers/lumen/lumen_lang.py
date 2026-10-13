@@ -119,7 +119,7 @@ class LumenLangLexer(QsciLexerCustom):
             'ret', 'assert', 'lambda', 'do', "is", "as", "ptr",
             'struct', 'enum', 'namespace', 'fn', 'continue', 'break', '__LINE__', '__FILE__', '__LUMEN__',
             'new', 'del', 'typeof', 'sizeof', 'out', 'outln',
-            'input', 'exit', 'append', 'reserve', 'typeis',
+            'input', 'exit', 'append', 'reserve', 'typeis', 'mod',
         }
         self.modifiers = {'const', 'static', 'global', 'final', 'private', 'shadow', 'strict', 'ref'}
         self.types = {'str', 'char', 'bool', 'Type', 'Namespace',

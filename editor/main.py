@@ -2,6 +2,7 @@
 Главный модуль — MainWindow + точка входа.
 """
 
+
 import sys
 import os
 import ctypes

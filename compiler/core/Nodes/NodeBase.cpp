@@ -62,6 +62,7 @@ enum NodeTypes {
     NodeLambda,
     NodeNew,
     NodeTypeOf,
+    NodeMod,
     NodeSizeOf,
     NodePtr,
 

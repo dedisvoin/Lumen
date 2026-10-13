@@ -191,6 +191,8 @@ struct ASTAnalizer {
             }
             case NodeTypes::NodeTypeOf:
                 return containsExit(static_cast<struct NodeTypeOf*>(node)->expr);
+            case NodeTypes::NodeMod:
+                return containsExit(static_cast<struct NodeMod*>(node)->expr);
             case NodeTypes::NodeSizeOf:
                 return containsExit(static_cast<struct NodeSizeOf*>(node)->expr);
             case NodeTypes::NodePtr:
@@ -314,7 +316,11 @@ struct ASTAnalizer {
             }
             case NodeTypes::NodeTypeOf: {
                 auto x = static_cast<struct NodeTypeOf*>(a), y = static_cast<struct NodeTypeOf*>(b);
-                return sameExpr(x->expr, y->expr);
+                return x->is_static == y->is_static && sameExpr(x->expr, y->expr);
+            }
+            case NodeTypes::NodeMod: {
+                auto x = static_cast<struct NodeMod*>(a), y = static_cast<struct NodeMod*>(b);
+                return x->modifier == y->modifier && sameExpr(x->expr, y->expr);
             }
             case NodeTypes::NodeSizeOf: {
                 auto x = static_cast<struct NodeSizeOf*>(a), y = static_cast<struct NodeSizeOf*>(b);
@@ -852,6 +858,9 @@ struct ASTAnalizer {
             }
             case NodeTypes::NodeTypeOf:
                 semanticVisit(static_cast<struct NodeTypeOf*>(node)->expr);
+                break;
+            case NodeTypes::NodeMod:
+                semanticVisit(static_cast<struct NodeMod*>(node)->expr);
                 break;
             case NodeTypes::NodeSizeOf:
                 semanticVisit(static_cast<struct NodeSizeOf*>(node)->expr);

@@ -41,6 +41,8 @@ namespace Literals {
         "append",
         "reserve",
         "typeof",
+        "typeis",
+        "mod",
         "sizeof",
         "ptr",
         "extern"

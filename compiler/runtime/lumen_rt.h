@@ -87,6 +87,9 @@ struct Box {
     // структура: имя типа + поля (shared_map: копии Box разделяют состояние -> write-back)
     std::string  tname;
     std::shared_ptr<std::map<std::string, Box>> sm;
+    // объявленные типы generic-полей структуры (для typeis): имя поля -> канонич. тип.
+    // Заполняется только у инстансов, чьи поля зависят от generic-параметров структуры.
+    std::shared_ptr<std::map<std::string, std::string>> fdecl;
     // указатель (new): одно значение-носитель
     std::shared_ptr<Box> heap;
     // ссылка-алиас (ref let / ref-параметр / ref-возврат): носитель = общая ячейка
@@ -119,9 +122,11 @@ struct Box {
     static Box fn(FnPtr x)      { Box v; v.t = T_FN;  v.fp = x; return v; }
     static Box clos(ClosFn f)   { Box v; v.t = T_CLOSURE; v.cl = std::make_shared<ClosFn>(std::move(f)); return v; }
     static Box typ(const std::string& tn) { Box v; v.t = T_TYPE; v.s = tn; return v; }
-    static Box strct(const std::string& name, std::map<std::string, Box> f) {
+    static Box strct(const std::string& name, std::map<std::string, Box> f,
+                     std::map<std::string, std::string> fd = {}) {
         Box v; v.t = T_STRUCT; v.tname = name;
         v.sm = std::make_shared<std::map<std::string, Box>>(std::move(f));
+        if (!fd.empty()) v.fdecl = std::make_shared<std::map<std::string, std::string>>(std::move(fd));
         return v;
     }
     static Box ptr(Box x) { Box v; v.t = T_PTR; v.addr = (x.t >= T_i8 && x.t <= T_i64) ? x.i : -1; v.heap = std::make_shared<Box>(std::move(x)); return v; }
@@ -555,6 +560,33 @@ static inline bool truthy(const Box& v) {
     return false;
 }
 
+// Сравнение type-имён: юнионы ("i32 | f32") сравниваются как множества —
+// зеркало структурного сравнения Type в интерпретаторе (порядок не важен).
+static inline bool type_name_eq(const std::string& a, const std::string& b) {
+    if (a == b) return true;
+    if (a.find(" | ") == std::string::npos && b.find(" | ") == std::string::npos)
+        return false;
+    auto split = [](const std::string& s) {
+        std::vector<std::string> r;
+        size_t pos = 0;
+        while (pos < s.size()) {
+            size_t sep = s.find(" | ", pos);
+            if (sep == std::string::npos) { r.push_back(s.substr(pos)); break; }
+            r.push_back(s.substr(pos, sep - pos));
+            pos = sep + 3;
+        }
+        return r;
+    };
+    auto va = split(a), vb = split(b);
+    if (va.size() != vb.size()) return false;
+    for (auto& x : va) {
+        bool found = false;
+        for (auto& y : vb) if (x == y) { found = true; break; }
+        if (!found) return false;
+    }
+    return true;
+}
+
 // Сравнения — зеркало бинарных ==/!=/</>/<=/>=. op: 'e' ==, 'n' !=, '<', '>', 'L' <=, 'G' >=.
 static inline Box cmp(char op, Box l, Box r) {
     if (op == 'e' || op == 'n') {
@@ -565,7 +597,7 @@ static inline Box cmp(char op, Box l, Box r) {
                 case Box::T_BOOL: eq = (l.b == r.b); break;
                 case Box::T_CHAR: eq = (l.c == r.c); break;
                 case Box::T_STR:  eq = (l.s == r.s); break;
-                case Box::T_TYPE: eq = (l.s == r.s); break;
+                case Box::T_TYPE: eq = type_name_eq(l.s, r.s); break;
 case Box::T_PTR:
                       // у &obj.field своя личность (refi), как у слота VirtualHeap:
                       // два независимых &s.age не равны, но копия одного указателя равна.
@@ -1018,6 +1050,16 @@ static inline std::string tyname(const Box& v) {
     }
     return "Null";
 }
+// объявленный (статический) тип поля структуры для typeis(...): если при создании
+// инстанса сохранён (generic-поля), возвращаем его; иначе — рантайм-тип значения поля.
+static inline Box field_decltype(const Box& box, const std::string& name) {
+    Box v = derefval(box);
+    if (v.t == Box::T_STRUCT && v.fdecl) {
+        auto it = v.fdecl->find(name);
+        if (it != v.fdecl->end()) return Box::typ(it->second);
+    }
+    return Box::typ(tyname(field(v, name)));
+}
 // тип-значение (Box::typ / строка) -> имя типа
 static inline std::string typename_of(const Box& t) {
     if (t.t == Box::T_TYPE) return t.s;
@@ -1110,7 +1152,9 @@ static inline Box typeof_dispatch(Ctx& ctx, Box v) {
         Box out;
         if (dunder_try(ctx, v.tname, "__typeof__", {v}, out)) return out;
     }
-    return Box::str(tyname(v));
+    // typeof отдаёт type-значение (T_TYPE, зеркало интерпретатора), чтобы
+    // `typeof(x) == i64` сравнивалось с типовым литералом, а не со строкой.
+    return Box::typ(tyname(v));
 }
 // ~x — битовое НЕ (только целые, как в DeepAnalizer)
 static inline Box bnot(Box v) {

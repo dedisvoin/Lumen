@@ -24,6 +24,7 @@
 #include "core/Nodes/NodeLambda.cpp"
 #include "core/Nodes/NodeNew.cpp"
 #include "core/Nodes/NodeTypeOf.cpp"
+#include "core/Nodes/NodeMod.cpp"
 #include "core/Nodes/NodeSizeOf.cpp"
 #include "core/Nodes/NodePtr.cpp"
 #include "core/Nodes/NodeStructDeclaration.cpp"
@@ -162,6 +163,10 @@ struct ASTGenerator final {
             return parseNew();
         } else if (walker.Check(TokenTypes::KEYWORD, "typeof")) {
             return parseTypeOf();
+        } else if (walker.Check(TokenTypes::KEYWORD, "typeis")) {
+            return parseTypeOf(true);
+        } else if (walker.Check(TokenTypes::KEYWORD, "mod")) {
+            return parseMod();
         } else if (walker.Check(TokenTypes::KEYWORD, "sizeof")) {
             return parseSizeOf();
         } else if (walker.Check(TokenTypes::KEYWORD, "ptr")) {
@@ -1553,9 +1558,9 @@ struct ASTGenerator final {
         return new struct NodeNew(modifiers, value, new_token);
     }
 
-    Node* parseTypeOf() {
-        Token kw = walker.safeGet(); // токен typeof
-        walker.Next(); // съедаем typeof
+    Node* parseTypeOf(bool is_static = false) {
+        Token kw = walker.safeGet(); // токен typeof/typeis
+        walker.Next(); // съедаем typeof/typeis
 
         if (!walker.CheckType(TokenTypes::BRACE_LEFT))
             reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), "("));
@@ -1571,7 +1576,9 @@ struct ASTGenerator final {
         else
             walker.Next();
 
-        return new struct NodeTypeOf(expr, kw);
+        Node* n = new struct NodeTypeOf(expr, kw);
+        static_cast<struct NodeTypeOf*>(n)->is_static = is_static;
+        return n;
     }
 
     Node* parseSizeOf() {
@@ -1593,6 +1600,40 @@ struct ASTGenerator final {
             walker.Next();
 
         return new struct NodeSizeOf(expr, kw);
+    }
+
+    Node* parseMod() {
+        Token kw = walker.safeGet(); // токен mod
+        walker.Next(); // съедаем mod
+
+        if (!walker.CheckType(TokenTypes::BRACE_LEFT))
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), "("));
+        else
+            walker.Next();
+
+        Node* expr = parseExpression();
+        if (!expr)
+            reportError(SYNTAX_ERRORS::EXPECTED_EXPRESSION(walker.safeGet()));
+
+        if (!walker.Check(TokenTypes::OPERATOR, ","))
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), ","));
+        else
+            walker.Next();
+
+        Token mt = walker.safeGet();
+        String modifier = mt.value;
+        if (!inVector(Literals::MODIFIERS, modifier)) {
+            reportError(SYNTAX_ERRORS::WAITING(mt,
+                "modifier (static, final, const, strict, private, ref, public)"));
+        }
+        walker.Next();
+
+        if (!walker.CheckType(TokenTypes::BRACE_RIGHT))
+            reportError(SYNTAX_ERRORS::MISSING_CLOSING(walker.safeGet(), "(", ")"));
+        else
+            walker.Next();
+
+        return new struct NodeMod(expr, modifier, kw);
     }
 
     Node* parseInput() {
@@ -2855,7 +2896,7 @@ void printNode(Node* node, int level, const std::vector<bool>& levelsStatus, boo
 
         case NodeTypes::NodeTypeOf: {
             auto n = static_cast<struct NodeTypeOf*>(node);
-            std::cout << Style("NodeTypeOf (typeof)", TerminalStyle::BRIGHT_CYAN) << "\n";
+            std::cout << Style(n->is_static ? "NodeTypeOf (typeis)" : "NodeTypeOf (typeof)", TerminalStyle::BRIGHT_CYAN) << "\n";
             std::vector<bool> newStatus = levelsStatus;
             newStatus.push_back(isCurrentLast);
             printNode(n->expr, level + 1, newStatus, true);
@@ -2865,6 +2906,15 @@ void printNode(Node* node, int level, const std::vector<bool>& levelsStatus, boo
         case NodeTypes::NodeSizeOf: {
             auto n = static_cast<struct NodeSizeOf*>(node);
             std::cout << Style("NodeSizeOf (sizeof)", TerminalStyle::BRIGHT_CYAN) << "\n";
+            std::vector<bool> newStatus = levelsStatus;
+            newStatus.push_back(isCurrentLast);
+            printNode(n->expr, level + 1, newStatus, true);
+            return;
+        }
+
+        case NodeTypes::NodeMod: {
+            auto n = static_cast<struct NodeMod*>(node);
+            std::cout << Style("NodeMod (mod " + n->modifier + ")", TerminalStyle::BRIGHT_CYAN) << "\n";
             std::vector<bool> newStatus = levelsStatus;
             newStatus.push_back(isCurrentLast);
             printNode(n->expr, level + 1, newStatus, true);
