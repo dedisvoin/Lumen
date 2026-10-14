@@ -14,7 +14,7 @@
     "folding_background": "#000000",
     "folding_foreground": "#585b70",
     "inlay_hint": "#737994",
-    "border": "#212121",
+    "border": "#101010",
     "brace_mismatch_background": "#f38ba8",
     "error": "#f38ba8",
     "warning": "#f9e2af"
