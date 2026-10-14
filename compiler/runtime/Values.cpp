@@ -115,8 +115,8 @@ Value new_bool(String value)  {
     else return Value(Ty::Bool, false);
 }
 
-// char
-Value new_char(char value)    { return Value(Ty::Char, value); }
+// char — полный Unicode-символ (кодовая точка), не один байт
+Value new_char(char32_t value) { return Value(Ty::Char, value); }
 
 // string (кастомный String)
 Value new_string(const String& value) { return Value(Ty::Str, value); }

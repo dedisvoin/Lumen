@@ -8,6 +8,8 @@ extern fn to_raf_float(s: str | char) -> ?f64  : { null };
 extern fn to_raf_str(v: any) -> ?str  : { null };
 
 
+final const let COMP_TIME_STR = "~cts~";
+
 /*
 Преобразует строку в целое число i64.
 
@@ -98,7 +100,7 @@ let g = to_str(3.5?);          // "3.500000"
 - CompileTime[str] — строковое представление значения.
 */
 fn to_str(v: any) -> CompileTime[str]  : {
-    ret CompileTime::from[str](to_raf_str(v) ?? "");
+    ret CompileTime::from[str](to_raf_str(v) ?? COMP_TIME_STR);
 }
 
 

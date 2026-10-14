@@ -17,6 +17,64 @@ struct Box;
 using FnPtr = Box (*)(Ctx, const std::vector<Box>&);
 using ClosFn = std::function<Box(Ctx, const std::vector<Box>&)>;
 
+// char в Lumen — полный Unicode-символ (кодовая точка), поэтому хранится как
+// char32_t, а строки (str) — как UTF-8. Эти два помощника конвертируют кодовая
+// точка <-> UTF-8, чтобы 'я'/'中'/'🙂' не обрезались до одного байта.
+static inline std::string utf8_encode(char32_t cp) {
+    std::string r;
+    if (cp < 0x80) {
+        r.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        r.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        r.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        r.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        r.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        r.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp <= 0x10FFFF) {
+        r.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        r.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        r.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        r.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+    return r;
+}
+
+// Декодирование одной кодовой точки UTF-8 из позиции pos; len — сколько байт занято.
+static inline char32_t utf8_decode(const std::string& s, size_t pos, size_t& len) {
+    unsigned char c = static_cast<unsigned char>(s[pos]);
+    if ((c & 0x80) == 0) { len = 1; return c; }
+    char32_t cp; size_t n;
+    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; n = 2; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; n = 3; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; n = 4; }
+    else { len = 1; return c; }
+    if (pos + n > s.size()) { len = 1; return c; }
+    for (size_t j = 1; j < n; ++j)
+        cp = (cp << 6) | (static_cast<unsigned char>(s[pos + j]) & 0x3F);
+    len = n;
+    return cp;
+}
+
+// Число кодовых точек в UTF-8-строке (совпадает с длиной String интерпретатора).
+static inline long long utf8_length(const std::string& s) {
+    long long n = 0; size_t p = 0;
+    while (p < s.size()) { size_t len; utf8_decode(s, p, len); p += len; ++n; }
+    return n;
+}
+
+// i-я кодовая точка UTF-8-строки; найден=true, если индекс в пределах.
+static inline char32_t utf8_nth(const std::string& s, long long i, bool& found) {
+    found = false;
+    long long k = 0; size_t p = 0;
+    while (p < s.size()) {
+        size_t len; char32_t cp = utf8_decode(s, p, len);
+        if (k == i) { found = true; return cp; }
+        p += len; ++k;
+    }
+    return 0;
+}
+
 // IEEE-754 binary16 (half): значение хранится как 16-битные биты.
 // double <-> half с округлением к ближайшему чётному (round-to-nearest-even).
 static inline unsigned short tohalf(double value) {
@@ -79,7 +137,7 @@ struct Box {
     long long    i = 0;
     double       f = 0;
     bool         b = false;
-    char         c = 0;
+    char32_t     c = 0;
     std::string  s;
     std::vector<Box> items;
     FnPtr        fp = nullptr;
@@ -119,7 +177,7 @@ struct Box {
     static Box f64(double x)    { Box v; v.t = T_f64; v.f = x; return v; }
     static Box f16(double x)    { Box v; v.t = T_f16; v.f = (double)fromhalf(tohalf(x)); return v; }
     static Box boo(bool x)      { Box v; v.t = T_BOOL; v.b = x; return v; }
-    static Box chr(char x)      { Box v; v.t = T_CHAR; v.c = x; return v; }
+    static Box chr(char32_t x)  { Box v; v.t = T_CHAR; v.c = x; return v; }
     static Box str(std::string x){ Box v; v.t = T_STR; v.s = std::move(x); return v; }
     static Box arr(std::vector<Box> x){ Box v; v.t = T_ARR; v.items = std::move(x); return v; }
     static Box tup(std::vector<Box> x){ Box v; v.t = T_TUP; v.items = std::move(x); return v; }
@@ -403,7 +461,7 @@ static inline std::string fmt(const Box& v) {
     switch (v.t) {
         case Box::T_STR:  return v.s;
         case Box::T_BOOL: return v.b ? "true" : "false";
-        case Box::T_CHAR: return std::string(1, v.c);
+        case Box::T_CHAR: return utf8_encode(v.c);
         case Box::T_NULL: return "null";
         case Box::T_ARR:
         case Box::T_TUP: {
@@ -440,7 +498,7 @@ static inline void println(const Box& v)   { std::cout << fmt(v) << "\n"; }
 
 static inline Box input(const Box& prompt) {
     if (prompt.t == Box::T_STR) std::cout << prompt.s;
-    else if (prompt.t == Box::T_CHAR) std::cout << prompt.c;
+    else if (prompt.t == Box::T_CHAR) std::cout << utf8_encode(prompt.c);
     std::string line;
     if (!std::getline(std::cin, line)) line.clear();
     return Box::str(std::move(line));
@@ -479,7 +537,7 @@ static inline Box bin(char op, Box l, Box r) {
         if (!is_int_t(r)) return Box::null();
         long long n = inum(r);
         if (n < 0) return Box::null();
-        std::string s = (l.t == Box::T_STR) ? l.s : std::string(1, l.c);
+        std::string s = (l.t == Box::T_STR) ? l.s : utf8_encode(l.c);
         std::string out;
         out.reserve(s.size() * (size_t)n);
         for (long long k = 0; k < n; ++k) out += s;
@@ -497,7 +555,7 @@ static inline Box bin(char op, Box l, Box r) {
     if (op == '+' && (l.t == Box::T_STR || l.t == Box::T_CHAR || r.t == Box::T_STR || r.t == Box::T_CHAR)) {
         auto toS = [](const Box& v) -> std::string {
             if (v.t == Box::T_STR)  return v.s;
-            if (v.t == Box::T_CHAR) return std::string(1, v.c);
+            if (v.t == Box::T_CHAR) return utf8_encode(v.c);
             return std::string();
         };
         if (l.t == Box::T_STR || l.t == Box::T_CHAR)
@@ -673,8 +731,11 @@ static inline Box index(Box v, Box idx) {
     if (!is_int_t(idx)) return Box::null();
     long long i = inum(idx);
     if (v.t == Box::T_STR) {
-        if (i < 0 || i >= (long long)v.s.size()) return Box::null();
-        return Box::chr(v.s[(size_t)i]);
+        if (i < 0) return Box::null();
+        bool found = false;
+        char32_t cp = utf8_nth(v.s, i, found);
+        if (!found) return Box::null();
+        return Box::chr(cp);
     }
     if (v.t == Box::T_ARR || v.t == Box::T_TUP) {
         if (i < 0 || i >= (long long)v.items.size()) return Box::null();
@@ -700,7 +761,7 @@ static inline Box del(Box host, Box idx) {
 
 // sizeof — длина строки/массива/кортежа, 1 для char.
 static inline Box szof(Box v) {
-    if (v.t == Box::T_STR)              return Box::i64((long long)v.s.size());
+    if (v.t == Box::T_STR)              return Box::i64(utf8_length(v.s));
     if (v.t == Box::T_CHAR)             return Box::i64(1);
     if (v.t == Box::T_ARR || v.t == Box::T_TUP)
                                          return Box::i64((long long)v.items.size());
@@ -711,8 +772,8 @@ static inline Box szof(Box v) {
 static inline Box cast(Box v, const std::string& tn) {
     if (v.t == Box::T_CHAR) {
         if (tn == "i8" || tn == "i16" || tn == "i32" || tn == "i64")
-            return Box::i64((long long)(unsigned char)v.c);
-        if (tn == "str") return Box::str(std::string(1, v.c));
+            return Box::i64((long long)v.c);
+        if (tn == "str") return Box::str(utf8_encode(v.c));
         if (tn == "char") return v;
         return Box::null();
     }
@@ -724,8 +785,12 @@ static inline Box cast(Box v, const std::string& tn) {
     if (tn == "f32")  return Box::f32((float)num(v));
     if (tn == "f16")  return Box::f16(num(v));
     if (tn == "char") {
-        if (v.t == Box::T_STR && v.s.size() == 1) return Box::chr(v.s[0]);
-        if (is_int_t(v) || is_f(v)) return Box::chr((char)inum(v));
+        if (v.t == Box::T_STR && !v.s.empty()) {
+            size_t n = 0;
+            char32_t cp = utf8_decode(v.s, 0, n);
+            if (n == v.s.size()) return Box::chr(cp);
+        }
+        if (is_int_t(v) || is_f(v)) return Box::chr((char32_t)inum(v));
         return Box::null();
     }
     if (tn == "str")  return Box::str(fmt(v));

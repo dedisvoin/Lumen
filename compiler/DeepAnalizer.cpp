@@ -35,7 +35,7 @@ static String formatValue(const Value& v) {
             return std::to_string(static_cast<long long>(d));
         return std::to_string(d);
     }
-    if (v.T == Ty::Char) { String s; s += static_cast<char32_t>(v.get<char>()); return s; }
+    if (v.T == Ty::Char) { String s; s += v.get<char32_t>(); return s; }
     if (v.T == Ty::Type_) return v.get<Type>().toString();
     if (v.T == Ty::Null)  return "null";
     if (v.T == Ty::Namespace) return "object(namespace)";
@@ -293,6 +293,19 @@ struct ASTDeepAnalyzer {
     // имена уже заявленных extern-функций (дубликаты — ошибка)
     std::vector<String> extern_fns;
     static const int CALL_BUDGET_LIMIT = 50000;
+    // Граница dry-прогона мёртвой ветки `if` (кадр scratch). Записи в переменные,
+    // которые разрешаются ВЫШЕ этого кадра (в живой цепочке parent), сохранять
+    // нельзя: мёртвая ветка исполняется только для сбора ошибок, а её эффекты
+    // должны отбрасываться. nullptr — не в dry-прогоне (или чистая ветка).
+    Context* dry_frame = nullptr;
+    bool dryAllowsWrite(Context& ctx, const String& name) const {
+        if (!dry_exec) return true;
+        for (Context* c = &ctx; c; c = c->parent) {
+            if (c->variables.find(name) != c->variables.end()) return true;
+            if (c == dry_frame) return false;
+        }
+        return false;
+    }
     bool dry_exec = false;          // РІРЅСѓС‚СЂРё В«СЃСѓС…РѕРіРѕВ» РїСЂРѕРіРѕРЅР° РјС‘СЂС‚РІРѕР№ РІРµС‚РєРё (С‚РµР»Р° РІС‹Р·РѕРІРѕРІ РЅРµ РёСЃРїРѕР»РЅСЏРµРј)
     long long prof_exec_count = 0;  // временно: счётчик вызовов execute (профилирование)
     bool prof_enabled = false;
@@ -741,7 +754,7 @@ struct ASTDeepAnalyzer {
                 error_container.addError(DEEP_ERRORS::STRING_REPEAT_NEGATIVE(start, end));
                 return new_null();
             }
-            String s = (l.T == Ty::Str) ? l.get<String>() : String::RepeatFrom(l.get<char>(), 1);
+            String s = (l.T == Ty::Str) ? l.get<String>() : String::RepeatFrom(l.get<char32_t>(), 1);
             String out;
             out.reserve(s.size() * (size_t)n);
             for (int64_t i = 0; i < n; ++i) out += s;
@@ -764,7 +777,7 @@ struct ASTDeepAnalyzer {
         if (op == '+' && (l.T == Ty::Str || l.T == Ty::Char || r.T == Ty::Str || r.T == Ty::Char)) {
             auto toStr = [](const Value& v) -> String {
                 if (v.T == Ty::Str) return v.get<String>();
-                if (v.T == Ty::Char) return String::RepeatFrom(v.get<char>(), 1);
+                if (v.T == Ty::Char) return String::RepeatFrom(v.get<char32_t>(), 1);
                 return String();
             };
             if (l.T == Ty::Str || l.T == Ty::Char) {
@@ -883,6 +896,59 @@ struct ASTDeepAnalyzer {
     // СЂР°Р·СЂРµС€Р°РµС‚ lvalue РІРёРґР° [scope::]*member (РєРѕСЂРµРЅСЊ вЂ” РёРјСЏ РЅРµР№РјСЃРїРµР№СЃР° РёР»Рё
     // СЂР°Р·С‹РјРµРЅРѕРІР°РЅРёРµ СѓРєР°Р·Р°С‚РµР»СЏ; РґРѕРїСѓСЃРєР°РµС‚СЃСЏ РѕР±С‘СЂС‚РєР° РІ NodeScope) РІ С…СЂР°РЅРёРјС‹Р№
     // ContextObject*. Р’РѕР·РІСЂР°С‰Р°РµС‚ nullptr РїСЂРё РѕС€РёР±РєРµ (РѕС€РёР±РєР° СѓР¶Рµ РґРѕР±Р°РІР»РµРЅР° РІ error_container).
+    // Разрешает член ТИПА: вариант enum'а либо (static) поле/метод структуры.
+    // Используется и когда тип — корень пути (`Vec::filled`), и когда тип идёт
+    // после namespace (`N::E::B`, `N::S::v`). Возвращает хранимый ContextObject*
+    // либо nullptr (ошибка уже добавлена в error_container).
+    ContextObject* resolveTypeMember(const Type& tt, const String& member_name, const Token& tok) {
+        if (tt.isStruct()) {
+            auto sit = structs.find(tt.name);
+            if (sit == structs.end()) {
+                error_container.addError(DEEP_ERRORS::STRUCT_NOT_FOUND(tok, tt.name));
+                return nullptr;
+            }
+            auto mit = sit->second.methods.find(member_name);
+            if (mit == sit->second.methods.end()) {
+                bool is_static_field =
+                    std::find(sit->second.static_fields.begin(),
+                              sit->second.static_fields.end(),
+                              member_name) != sit->second.static_fields.end();
+                if (is_static_field && sit->second.decl_context.has_variable(member_name))
+                    return &sit->second.decl_context.get_variable(member_name);
+                auto fit = std::find_if(sit->second.fields.begin(),
+                            sit->second.fields.end(),
+                            [&](const StructFieldDef& f) { return f.name == member_name; });
+                if (fit != sit->second.fields.end()) {
+                    error_container.addError(DEEP_ERRORS::INSTANCE_FIELD_SCOPE_CALL(
+                        tok, member_name, tt.name));
+                    return nullptr;
+                }
+                error_container.addError(DEEP_ERRORS::METHOD_NOT_FOUND(tok, member_name, tt.name));
+                return nullptr;
+            }
+            auto co_cell = std::make_unique<ContextObject>(
+                member_name, Value(mit->second.callableType(), mit->second), Ty::Null);
+            co_cell->addr = heap.allocate_high(co_cell.get());
+            auto* ptr = co_cell.get();
+            new_cells.push_back(std::move(co_cell));
+            return ptr;
+        }
+        if (tt.isEnum()) {
+            auto eit = enums.find(tt.name);
+            if (eit == enums.end()) {
+                error_container.addError(DEEP_ERRORS::ENUM_REDECLARED(tok, tt.name));
+                return nullptr;
+            }
+            if (!eit->second.enum_context.has_variable_local(member_name)) {
+                error_container.addError(DEEP_ERRORS::ENUM_VARIANT_NOT_FOUND(tok, member_name, tt.name));
+                return nullptr;
+            }
+            return &eit->second.enum_context.get_variable_local(member_name);
+        }
+        error_container.addError(DEEP_ERRORS::SCOPE_RESOLUTION_NOT_NAMESPACE(tok, tt.toString()));
+        return nullptr;
+    }
+
     ContextObject* resolveScopeMember(Node* node, Context& ctx) {
         if (!node) return nullptr;
         while (node->type == NodeTypes::NodeScope) {
@@ -905,6 +971,9 @@ struct ASTDeepAnalyzer {
             names.push_back(nameOf(static_cast<struct NodeBinaryScopeResolution*>(cur)->r_node));
             cur = static_cast<struct NodeBinaryScopeResolution*>(cur)->l_node;
         }
+        // обход идёт от самого внутреннего имени к внешнему, а резолвинг ниже
+        // идёт от корня вглубь — поэтому порядок «A::B::C::x» => [B, C], не [C, B]
+        std::reverse(names.begin(), names.end());
         Node* root = cur;
         // разворачиваем скобки вокруг корня: (*a)::p -> root = *a (NodeUnaryDereference)
         while (root->type == NodeTypes::NodeScope) {
@@ -922,62 +991,11 @@ struct ASTDeepAnalyzer {
                 return nullptr;
             }
             ContextObject& obj = ctx.get_variable(nm);
-            // статические методы структуры: `Vec::filled(1)`
+            // тип как корень пути: `Vec::filled(1)`, `Types::a`, `Test::name`
             if (obj.value.T == Ty::Type_ && obj.is_type_decl) {
                 Type tt = obj.value.get<Type>();
-                if (tt.isStruct()) {
-                    auto sit = structs.find(tt.name);
-                    if (sit == structs.end()) {
-                        error_container.addError(DEEP_ERRORS::STRUCT_NOT_FOUND(sr->member_token, tt.name));
-                        return nullptr;
-                    }
-                    auto mit = sit->second.methods.find(member_name);
-                    if (mit == sit->second.methods.end()) {
-                        // static-поле: `Test::name` (обычное выражение, без вызова)
-                        bool is_static_field =
-                            std::find(sit->second.static_fields.begin(),
-                                      sit->second.static_fields.end(),
-                                      member_name) != sit->second.static_fields.end();
-                        if (is_static_field && sit->second.decl_context.has_variable(member_name))
-                            return &sit->second.decl_context.get_variable(member_name);
-                        auto fit = std::find_if(sit->second.fields.begin(),
-                                    sit->second.fields.end(),
-                                    [&](const StructFieldDef& f) { return f.name == member_name; });
-                        if (fit != sit->second.fields.end()) {
-                            error_container.addError(DEEP_ERRORS::INSTANCE_FIELD_SCOPE_CALL(
-                                sr->member_token, member_name, tt.name));
-                            return nullptr;
-                        }
-                        error_container.addError(DEEP_ERRORS::METHOD_NOT_FOUND(
-                            sr->member_token, member_name, tt.name));
-                        return nullptr;
-                    }
-                    // значение-функция живёт в куче анализатора (весь запуск)
-                    auto co_cell = std::make_unique<ContextObject>(
-                        member_name, Value(mit->second.callableType(), mit->second), Ty::Null);
-                    co_cell->addr = heap.allocate_high(co_cell.get());
-                    auto* ptr = co_cell.get();
-                    new_cells.push_back(std::move(co_cell));
-                    return ptr;
-                }
-            }
-            // enum: `Types::a` возвращает константу варианта
-            if (obj.value.T == Ty::Type_ && obj.is_type_decl) {
-                Type et = obj.value.get<Type>();
-                if (et.isEnum()) {
-                    auto eit = enums.find(et.name);
-                    if (eit == enums.end()) {
-                        error_container.addError(DEEP_ERRORS::ENUM_REDECLARED(
-                            sr->member_token, et.name));
-                        return nullptr;
-                    }
-                    if (!eit->second.enum_context.has_variable_local(member_name)) {
-                        error_container.addError(DEEP_ERRORS::ENUM_VARIANT_NOT_FOUND(
-                            sr->member_token, member_name, et.name));
-                        return nullptr;
-                    }
-                    return &eit->second.enum_context.get_variable_local(member_name);
-                }
+                if (tt.isStruct() || tt.isEnum())
+                    return resolveTypeMember(tt, member_name, sr->member_token);
             }
             if (obj.value.T != Ty::Namespace) {
                 error_container.addError(DEEP_ERRORS::SCOPE_RESOLUTION_NOT_NAMESPACE(sr->member_token, obj.value.T.toString()));
@@ -1055,6 +1073,20 @@ struct ASTDeepAnalyzer {
             if (next.modifiers.Private) {
                 error_container.addError(DEEP_ERRORS::PRIVATE_ACCESS(sr->member_token, names[i]));
                 return nullptr;
+            }
+            // тип (enum/struct) как звено пути: дальше идёт сам член
+            // (`N::E::B`, `N::S::v`). Тип не может содержать namespace,
+            // поэтому это всегда последнее промежуточное имя.
+            if (next.value.T == Ty::Type_ && next.is_type_decl) {
+                Type nt = next.value.get<Type>();
+                if (nt.isStruct() || nt.isEnum()) {
+                    if (i + 1 != names.size()) {
+                        error_container.addError(DEEP_ERRORS::SCOPE_RESOLUTION_NOT_NAMESPACE(
+                            sr->member_token, next.value.T.toString()));
+                        return nullptr;
+                    }
+                    return resolveTypeMember(nt, member_name, sr->member_token);
+                }
             }
             if (next.value.T != Ty::Namespace) {
                 error_container.addError(DEEP_ERRORS::SCOPE_RESOLUTION_NOT_NAMESPACE(sr->member_token, next.value.T.toString()));
@@ -1603,7 +1635,7 @@ struct ASTDeepAnalyzer {
                             tok, co.identifier, wt.toString(), assignV.T.toString()));
                         return false;
                     }
-                    co.value = assignV;
+                    if (dryAllowsWrite(ctx, vn->name)) co.value = assignV;
                 }
                 return true;
             }
@@ -1669,7 +1701,7 @@ struct ASTDeepAnalyzer {
                         return false;
                     }
                 }
-                co->value = v;
+                if (!dry_exec) co->value = v;
                 return true;
             }
             case NodeTypes::NodeMemberAccess: {
@@ -3339,7 +3371,7 @@ if (!isAssignablePath(var_decl->value_node, context)) {
                             error_container.addError(DEEP_ERRORS::ARRAY_INDEX_OUT_OF_RANGE(acc_node->token, si, static_cast<long long>(sval.size())));
                             return new_null();
                         }
-                        cur = new_char(static_cast<char>(sval[static_cast<size_t>(si)]));
+                        cur = new_char(sval[static_cast<size_t>(si)]);
                         continue;
                     }
                     if (!cur.T.isArray() && !cur.T.isTuple()) {
@@ -3686,7 +3718,7 @@ case NodeTypes::NodeUnaryPlus: {
                 if (left.T == Ty::Str)
                     return new_bool(left.get<String>() == right.get<String>());
                 if (left.T == Ty::Char)
-                    return new_bool(left.get<char>() == right.get<char>());
+                    return new_bool(left.get<char32_t>() == right.get<char32_t>());
                 if (left.T == Ty::Null)
                     return new_bool(true);
                 if (left.T == Ty::Type_)
@@ -3715,7 +3747,7 @@ case NodeTypes::NodeUnaryPlus: {
                 if (left.T == Ty::Str)
                     return new_bool(left.get<String>() != right.get<String>());
                 if (left.T == Ty::Char)
-                    return new_bool(left.get<char>() != right.get<char>());
+                    return new_bool(left.get<char32_t>() != right.get<char32_t>());
                 if (left.T == Ty::Null)
                     return new_bool(false);
                 if (left.T == Ty::Type_)
@@ -4140,7 +4172,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                     if (mv.T == Ty::Str) {
                         message = mv.get<String>();
                     } else if (mv.T == Ty::Char) {
-                        message = String(static_cast<char32_t>(mv.get<char>()));
+                        message = String(mv.get<char32_t>());
                     } else {
                         error_container.addError(DEEP_ERRORS::ASSERT_MESSAGE_TYPE(
                             a_node->token, mv.T.toString()));
@@ -4273,6 +4305,10 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                         return new_null();
                     }
                     ContextObject& var = context.get_variable(var_node->name);
+                    // Барьер dry-прогона мёртвой ветки: не коммитим запись в
+                    // переменную, разрешившуюся выше кадра ветки — иначе эффект
+                    // недостижимого кода протекает наружу (`res += ...` во внешнюю `res`).
+                    const bool commit_ok = dryAllowsWrite(context, var_node->name);
                     // const/final-алиас: менять сам алиас нельзя, даже если цель
                     // изменяема (`const ref let b = a; b = 20;` — ошибка).
                     if (var.modifiers.Final) {
@@ -4286,7 +4322,8 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                     // ref-алиас: `r = v` пишет в цель алиаса (проверки Final/Const/Strict
                     // выполнит writePathValue по пути цели)
                     if (var.ref_alias_node) {
-                        writePathValue(var.ref_alias_node, context, r, var_node->token);
+                        if (commit_ok)
+                            writePathValue(var.ref_alias_node, context, r, var_node->token);
                         return r;
                     }
                     if (tryAssignDunder(binary_node->l_node, context, var.value, r, var_node->token))
@@ -4334,6 +4371,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                                 var_node->token, var_node->name, wt.toString(), candT.toString()));
                             return er;
                         }
+                        if (commit_ok) {
                         RuntimeArray& larr = var.value.get_ref<RuntimeArray>();
                         std::vector<Value>& vec = larr.mut();
                         const auto& rv = rhs_v.get_ref<RuntimeArray>().view();
@@ -4350,6 +4388,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                         // Точность длины: ветка `+=` обходила doAppendValue и не
                         // трогала size — `{i64, 0}` при sizeof == 2.
                         var.value.T.size = static_cast<int>(vec.size());
+                        }
                         return var.value;
                     }
                     Value assignR = r;
@@ -4363,7 +4402,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                         error_container.addError(DEEP_ERRORS::ASSIGNMENT_TYPE_MISMATCH(var_node->token, var_node->name, wt.toString(), assignR.T.toString()));
                         return r;
                     }
-                    var.value = assignR;
+                    if (commit_ok) var.value = assignR;
                 } else if (binary_node->l_node && binary_node->l_node->type == NodeTypes::NodeUnaryDereference) {
                     auto* deref_node = static_cast<struct NodeUnaryDereference*>(binary_node->l_node);
                     Value ptr = execute(deref_node->node, context);
@@ -4460,7 +4499,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                         error_container.addError(DEEP_ERRORS::ASSIGNMENT_TYPE_MISMATCH(sr->member_token, member->identifier, wt.toString(), r.T.toString()));
                         return r;
                     }
-                    member->value = r;
+                    if (!dry_exec) member->value = r;
                 } else if (binary_node->l_node && binary_node->l_node->type == NodeTypes::NodeArrayAccess) {
                     auto* acc = static_cast<struct NodeArrayAccess*>(binary_node->l_node);
                     // ref-алиас как корень индексации: `r[i] = v` пишет в цель алиаса
@@ -4604,7 +4643,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                             }
                         }
                         if (!setIndexRec(cur, chain, 0, acc->token, context, r)) return r;
-                        fit->second = cur;
+                        if (!dry_exec) fit->second = cur;
                         return r;
                     }
                     if (!store) {
@@ -4629,7 +4668,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                         }
                     }
                     if (!setIndexRec(cur, chain, 0, acc->token, context, r)) return r;
-                    store->value = cur;
+                    if (dryAllowsWrite(context, store->identifier)) store->value = cur;
                 } else if (binary_node->l_node && binary_node->l_node->type == NodeTypes::NodeFunctionCall) {
                     // `get() = v` — write-back ref-возврата (для не-ref-функции —
                     // ASSIGN_TO_EXPRESSION внутри writePathValue)
@@ -4821,8 +4860,11 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                         int saved_budget = iter_budget;
                         bool saved_budget_exhausted = budget_exhausted;
                         bool saved_dry = dry_exec;
+                        Context* saved_dry_frame = dry_frame;
                         dry_exec = true;
+                        dry_frame = nullptr;
                         execute(dead_branch, context);
+                        dry_frame = saved_dry_frame;
                         dry_exec = saved_dry;
                         inlay_hints = std::move(saved_hints);
                         aborted = saved_aborted;
@@ -4843,8 +4885,11 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     int saved_budget = iter_budget;
                     bool saved_budget_exhausted = budget_exhausted;
                     bool saved_dry = dry_exec;
+                    Context* saved_dry_frame = dry_frame;
                     dry_exec = true;
+                    dry_frame = &scratch;
                     execute(dead_branch, scratch);
+                    dry_frame = saved_dry_frame;
                     dry_exec = saved_dry;
                     inlay_hints = std::move(saved_hints);
                     aborted = saved_aborted;
@@ -5138,9 +5183,9 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     if (target == Ty::f64) return new_f64(num);
                 }
 
-                // char -> integer (ASCII code)
+                // char -> integer (кодовая точка Unicode)
                 if (src == Ty::Char && isIntegerType(target)) {
-                    int64_t num = static_cast<int64_t>(lv.get<char>());
+                    int64_t num = static_cast<int64_t>(lv.get<char32_t>());
                     if (target == Ty::i8)  return new_i8(static_cast<int8_t>(num));
                     if (target == Ty::i16) return new_i16(static_cast<int16_t>(num));
                     if (target == Ty::i32) return new_i32(static_cast<int32_t>(num));
@@ -5159,7 +5204,7 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                 // integer -> char
                 if (isIntegerType(src) && target == Ty::Char) {
                     int64_t num = getNumberFromType<int64_t>(lv);
-                    return new_char(static_cast<char>(num));
+                    return new_char(static_cast<char32_t>(num));
                 }
 
                 // pointer -> pointer (СЂРµРёРЅС‚РµСЂРїСЂРµС‚Р°С†РёСЏ Р°РґСЂРµСЃР°)
@@ -5339,7 +5384,7 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
             RuntimeStruct& rs = holder->value.get_ref<RuntimeStruct>();
             auto fit = rs.mut().find(field);
             if (fit == rs.view().end()) return false;
-            fit->second = mutated;
+            if (!dry_exec) fit->second = mutated;
             return true;
         } else if (base_node->type == NodeTypes::NodeArrayAccess) {
             // элемент массива: мутируем копию массива и пишем её обратно в базу
@@ -5368,7 +5413,7 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
             error_container.addError(DEEP_ERRORS::CONST_FN_MUTATION(tok, "index"));
             return false;
         }
-        own->value = mutated;
+        if (!dry_exec) own->value = mutated;
         return true;
     }
 

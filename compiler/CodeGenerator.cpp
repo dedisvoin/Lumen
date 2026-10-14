@@ -454,6 +454,26 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
         return s;
     }
 
+    // Полное имя левой части `::`: для вложенного scope-resolution собирает
+    // "A::B::C". Пустая строка — если слева не имя/цепочка имён (напр. вызов),
+    // тогда вызывающий уходит в ветку rt::field(...).
+    String scopeLeftName(Node* n) {
+        while (n && n->type == NodeTypes::NodeScope)
+            n = static_cast<struct NodeScope*>(n)->node;
+        if (!n) return String();
+        if (n->type == NodeTypes::NodeVariable)
+            return static_cast<struct NodeVariable*>(n)->name;
+        if (n->type == NodeTypes::NodeBinaryScopeResolution) {
+            auto* sr = static_cast<struct NodeBinaryScopeResolution*>(n);
+            String l = scopeLeftName(sr->l_node);
+            String r = scopeLeftName(sr->r_node);
+            if (l.empty()) return r;
+            if (r.empty()) return l;
+            return l + String("::") + r;
+        }
+        return String();
+    }
+
     static String escapeString(const String& s) {
         String out;
         for (size_t i = 0; i < s.size(); ++i) {
@@ -542,15 +562,10 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             case NodeTypes::NodeString: {
                 auto* n = static_cast<struct NodeString*>(node);
                 if (n->is_char && n->value.size() == 1) {
-                    String c;
+                    // char хранит полную кодовую точку Unicode — эмитим число,
+                    // чтобы не зависеть от кодировки исходника (например 'я').
                     char32_t ch = n->value[0];
-                    if (ch == U'\'') c = "\\'";
-                    else if (ch == U'\\') c = "\\\\";
-                    else if (ch == U'\n') c = "\\n";
-                    else if (ch == U'\t') c = "\\t";
-                    else if (ch == U'\r') c = "\\r";
-                    else c += ch;
-                    return "rt::Box::chr('" + c + "')";
+                    return "rt::Box::chr(" + String(std::to_string(static_cast<unsigned long long>(ch))) + ")";
                 }
                 return "rt::Box::str(\"" + escapeString(n->value) + "\")";
             }
@@ -862,15 +877,12 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             }
             case NodeTypes::NodeBinaryScopeResolution: {
                 auto* n = static_cast<struct NodeBinaryScopeResolution*>(node);
-                Node* l = n->l_node;
-                while (l && l->type == NodeTypes::NodeScope)
-                    l = static_cast<struct NodeScope*>(l)->node;
+                // левая часть может быть цепочкой (`N::E::B`): собираем полное имя
+                String lname = scopeLeftName(n->l_node);
                 Node* r = n->r_node;
                 while (r && r->type == NodeTypes::NodeScope)
                     r = static_cast<struct NodeScope*>(r)->node;
-                String lname, rname;
-                if (l && l->type == NodeTypes::NodeVariable)
-                    lname = static_cast<struct NodeVariable*>(l)->name;
+                String rname;
                 if (r && r->type == NodeTypes::NodeVariable)
                     rname = static_cast<struct NodeVariable*>(r)->name;
                 String key = lname + "::" + rname;
@@ -992,12 +1004,22 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                         Node* u = m;
                         while (u && u->type == NodeTypes::NodeModifier)
                             u = static_cast<struct NodeModifier*>(u)->node;
-                        if (!u || u->type != NodeTypes::NodeVariableDeclaration) continue;
-                        auto* vd = static_cast<struct NodeVariableDeclaration*>(u);
-                        if (!first) s += ", ";
-                        s += "{ " + quote(vd->name) + ", "
-                           + (vd->value_node ? emitExpr(vd->value_node) : "rt::Box::null()") + " }";
-                        first = false;
+                        if (!u) continue;
+                        if (u->type == NodeTypes::NodeVariableDeclaration) {
+                            auto* vd = static_cast<struct NodeVariableDeclaration*>(u);
+                            if (!first) s += ", ";
+                            s += "{ " + quote(vd->name) + ", "
+                               + (vd->value_node ? emitExpr(vd->value_node) : "rt::Box::null()") + " }";
+                            first = false;
+                        } else if (u->type == NodeTypes::NodeNamespace) {
+                            // вложенный namespace — член внешнего (зеркало live-контекста
+                            // интерпретатора): значение строится рекурсивно тем же nslit.
+                            auto* inner = static_cast<struct NodeNamespace*>(u);
+                            if (inner->name.empty()) continue;
+                            if (!first) s += ", ";
+                            s += "{ " + quote(inner->name) + ", " + emitExpr(u) + " }";
+                            first = false;
+                        }
                     }
                 }
                 // анонимный namespace наследует видимую область (интерпретатор: parent-цепочка):
@@ -1204,6 +1226,41 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
     }
 
     // ------------------- statements -------------------
+
+    // Statement-набор namespace: определить само значение и его членов.
+    // Вложенные namespace обрабатываются рекурсивно (ключ "outer::inner::...").
+    String emitNamespaceStmt(struct NodeNamespace* nsp, const String& full) {
+        String s;
+        if (!full.empty())
+            s += envVar() + ".define(" + quote(full) + ", " + emitExpr(nsp)
+               + "); // namespace-значение " + full + "\n";
+        Node* b = nsp->body;
+        while (b && b->type == NodeTypes::NodeModifier)
+            b = static_cast<struct NodeModifier*>(b)->node;
+        if (b && b->type == NodeTypes::NodeStatementsScope) {
+            for (auto* m : static_cast<struct NodeStatementsScope*>(b)->nodes) {
+                Node* u = m;
+                while (u && u->type == NodeTypes::NodeModifier)
+                    u = static_cast<struct NodeModifier*>(u)->node;
+                if (!u) continue;
+                if (u->type == NodeTypes::NodeVariableDeclaration) {
+                    auto* vd = static_cast<struct NodeVariableDeclaration*>(u);
+                    s += envVar() + ".define(" + quote(full + "::" + vd->name) + ", "
+                       + (vd->value_node ? emitExpr(vd->value_node) : "rt::Box::null()")
+                       + ");\n";
+                } else if (u->type == NodeTypes::NodeStructDeclaration) {
+                    // структура внутри namespace: static-поля живут
+                    // под ключом "Ns::Struct::field"
+                    s += emitStructStatics(u, full);
+                } else if (u->type == NodeTypes::NodeNamespace) {
+                    auto* inner = static_cast<struct NodeNamespace*>(u);
+                    if (inner->name.empty()) continue;
+                    s += emitNamespaceStmt(inner, full + "::" + inner->name);
+                }
+            }
+        }
+        return s;
+    }
 
     String emitStmt(Node* node) {
         if (!node) return "";
@@ -1526,35 +1583,7 @@ case NodeTypes::NodeStructDeclaration:
                 return "";
             case NodeTypes::NodeNamespace: {
                 auto* nsp = static_cast<struct NodeNamespace*>(node);
-                String full = nsp->name;
-                Node* b = nsp->body;
-                while (b && b->type == NodeTypes::NodeModifier)
-                    b = static_cast<struct NodeModifier*>(b)->node;
-                String s;
-                // именованный namespace как значение: определяем саму переменную `a`,
-                // чтобы `echo a` / `a` давали объект namespace, а не null
-                if (!full.empty())
-                    s += envVar() + ".define(" + quote(full) + ", " + emitExpr(node)
-                       + "); // namespace-значение " + full + "\n";
-                if (b && b->type == NodeTypes::NodeStatementsScope) {
-                    for (auto* m : static_cast<struct NodeStatementsScope*>(b)->nodes) {
-                        Node* u = m;
-                        while (u && u->type == NodeTypes::NodeModifier)
-                            u = static_cast<struct NodeModifier*>(u)->node;
-                        if (u && u->type == NodeTypes::NodeVariableDeclaration) {
-                            auto* vd = static_cast<struct NodeVariableDeclaration*>(u);
-                            String key = full + "::" + vd->name;
-                            s += envVar() + ".define(" + quote(key) + ", "
-                               + (vd->value_node ? emitExpr(vd->value_node) : "rt::Box::null()")
-                               + ");\n";
-                        } else if (u && u->type == NodeTypes::NodeStructDeclaration) {
-                            // структура внутри namespace: static-поля живут
-                            // под ключом "Ns::Struct::field"
-                            s += emitStructStatics(u, full);
-                        }
-                    }
-                }
-                return s;
+                return emitNamespaceStmt(nsp, nsp->name);
             }
             case NodeTypes::NodeUnaryPostfixIncrement:
             case NodeTypes::NodeUnaryPostfixDecrement:
@@ -2292,6 +2321,8 @@ case NodeTypes::NodeStructDeclaration:
             auto* e = static_cast<struct NodeEnumDeclaration*>(n);
             std::vector<String> vs;
             for (auto& tok : e->variants) vs.push_back(tok.value);
+            String qn = ns.empty() ? e->name : ns + "::" + e->name;
+            enumMap[qn] = vs;
             enumMap[e->name] = std::move(vs);
             return;
         }
