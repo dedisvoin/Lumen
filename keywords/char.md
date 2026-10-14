@@ -21,3 +21,12 @@ echo first == 'h';         // true
 echo '\0' as i64;          // 0
 echo ' ' as i64;           // 32
 ```
+
+Литерал в одинарных кавычках обязан содержать ровно один символ. Если внутри `''`
+не один символ (`''`, `'ab'`), выдаётся предупреждение `warning[206]`, а литерал
+трактуется как строка (`str`):
+```lumen
+let a = 'ab';       // warning[206]: char literal length: 2 -> type str
+let b = '';         // warning[206]: char literal length: 0 -> type str
+let c = 'a';        // type char
+```

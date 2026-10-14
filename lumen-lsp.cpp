@@ -1261,8 +1261,11 @@ static std::string exprText(Node* n) {
         }
         case NodeTypes::NodeUnaryMinus:
             return "-" + exprText(static_cast<struct NodeUnaryMinus*>(n)->node);
-        case NodeTypes::NodeString:
-            return "\"" + static_cast<struct NodeString*>(n)->value.to_utf8() + "\"";
+        case NodeTypes::NodeString: {
+            auto* sn = static_cast<struct NodeString*>(n);
+            const std::string q = sn->is_char ? "'" : "\"";
+            return q + sn->value.to_utf8() + q;
+        }
         case NodeTypes::NodeArray: {
             std::string s = "{";
             for (size_t i = 0; i < static_cast<struct NodeArray*>(n)->elements.size(); ++i) {
