@@ -1407,6 +1407,53 @@ struct ASTDeepAnalyzer {
         }
     }
 
+    // Структурная адресуемость пути БЕЗ учёта const/final (переменная, поле,
+    // элемент, разыменование, вызов-вернувший-ref, Ns::member). Нужна для
+    // const-корректности ссылок: `const ref let b = a;` на const-цель.
+    bool isAddressablePath(Node* target, Context& ctx) {
+        if (!target) return false;
+        while (target->type == NodeTypes::NodeScope)
+            target = static_cast<struct NodeScope*>(target)->node;
+        switch (target->type) {
+            case NodeTypes::NodeVariable:
+                return ctx.has_variable(static_cast<struct NodeVariable*>(target)->name);
+            case NodeTypes::NodeUnaryDereference:
+                return true;
+            case NodeTypes::NodeMemberAccess: {
+                auto* ma = static_cast<struct NodeMemberAccess*>(target);
+                return isAddressablePath(ma->l_node, ctx)
+                    || ma->l_node->type == NodeTypes::NodeBinaryScopeResolution;
+            }
+            case NodeTypes::NodeArrayAccess:
+                return isAddressablePath(static_cast<struct NodeArrayAccess*>(target)->base, ctx);
+            case NodeTypes::NodeFunctionCall:
+            case NodeTypes::NodeBinaryScopeResolution:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Корень пути — const-ячейка? (источник ссылки неизменяем).
+    bool pathRootIsConst(Node* target, Context& ctx) {
+        if (!target) return false;
+        while (target->type == NodeTypes::NodeScope)
+            target = static_cast<struct NodeScope*>(target)->node;
+        switch (target->type) {
+            case NodeTypes::NodeVariable: {
+                auto* vn = static_cast<struct NodeVariable*>(target);
+                if (!ctx.has_variable(vn->name)) return false;
+                return ctx.get_variable(vn->name).modifiers.Const;
+            }
+            case NodeTypes::NodeMemberAccess:
+                return pathRootIsConst(static_cast<struct NodeMemberAccess*>(target)->l_node, ctx);
+            case NodeTypes::NodeArrayAccess:
+                return pathRootIsConst(static_cast<struct NodeArrayAccess*>(target)->base, ctx);
+            default:
+                return false;
+        }
+    }
+
     // Является ли выражение реф-ЗНАЧЕНИЕМ (живой ссылкой), а не значением:
     //  - вызов функции, объявленной '-> ref T' (декларация берётся из resolved_calls,
     //    заполненного при реальном исполнении вызова Execute), или
@@ -1495,6 +1542,16 @@ struct ASTDeepAnalyzer {
                     return false;
                 }
                 ContextObject& co = ctx.get_variable(vn->name);
+                // const/final-линк: изменять сам алиас нельзя, даже если цель
+                // изменяема (`const ref let b = a; b = 20;` — ошибка).
+                if (co.modifiers.Final) {
+                    error_container.addError(DEEP_ERRORS::FINAL_REASSIGNED(tok, co.identifier));
+                    return false;
+                }
+                if (co.modifiers.Const) {
+                    error_container.addError(DEEP_ERRORS::CONST_REASSIGNED(tok, co.identifier));
+                    return false;
+                }
                 // ref-алиас: запись переадресуется цели («живая ссылка»)
                 if (co.ref_alias_node) {
                     if (++ref_chain_depth > REF_CHAIN_LIMIT) {
@@ -1505,14 +1562,6 @@ struct ASTDeepAnalyzer {
                     bool ok = writePathValue(co.ref_alias_node, ctx, v, tok);
                     --ref_chain_depth;
                     return ok;
-                }
-                if (co.modifiers.Final) {
-                    error_container.addError(DEEP_ERRORS::FINAL_REASSIGNED(tok, co.identifier));
-                    return false;
-                }
-                if (co.modifiers.Const) {
-                    error_container.addError(DEEP_ERRORS::CONST_REASSIGNED(tok, co.identifier));
-                    return false;
                 }
                 if (const_receiver && (const_receiver == &co || const_receiver->identifier == co.identifier)) {
                     error_container.addError(DEEP_ERRORS::CONST_FN_MUTATION(tok, co.identifier));
@@ -2045,8 +2094,7 @@ struct ASTDeepAnalyzer {
                     return false;
                 }
                 ContextObject& var = ctx.get_variable(var_node->name);
-                if (var.ref_alias_node)
-                    return appendInPlace(var.ref_alias_node, ctx, v, tok, commit);
+                // const/final-линк: нельзя менять сам алиас (см. writePathValue).
                 if (var.modifiers.Const) {
                     error_container.addError(DEEP_ERRORS::CONST_REASSIGNED(var_node->token, var_node->name));
                     return false;
@@ -2055,6 +2103,8 @@ struct ASTDeepAnalyzer {
                     error_container.addError(DEEP_ERRORS::FINAL_REASSIGNED(var_node->token, var_node->name));
                     return false;
                 }
+                if (var.ref_alias_node)
+                    return appendInPlace(var.ref_alias_node, ctx, v, tok, commit);
                 if (const_receiver && (const_receiver == &var
                         || (const_receiver->identifier == var.identifier))) {
                     error_container.addError(DEEP_ERRORS::CONST_FN_MUTATION(tok, var.identifier));
@@ -2373,8 +2423,6 @@ struct ASTDeepAnalyzer {
                     return false;
                 }
                 ContextObject& var = ctx.get_variable(var_node->name);
-                if (var.ref_alias_node)
-                    return appendDescendFrom(var.ref_alias_node, ctx, v, tok, commit, idxs);
                 if (var.modifiers.Const) {
                     error_container.addError(DEEP_ERRORS::CONST_REASSIGNED(var_node->token, var_node->name));
                     return false;
@@ -2383,6 +2431,8 @@ struct ASTDeepAnalyzer {
                     error_container.addError(DEEP_ERRORS::FINAL_REASSIGNED(var_node->token, var_node->name));
                     return false;
                 }
+                if (var.ref_alias_node)
+                    return appendDescendFrom(var.ref_alias_node, ctx, v, tok, commit, idxs);
                 return appendAt(var.value, idxs, 0, tok, ctx, v, commit);
             }
             case NodeTypes::NodeUnaryDereference: {
@@ -2816,8 +2866,15 @@ ContextObject::Modifiers saved_mods = active_mods;
                         break;
                     }
 if (!isAssignablePath(var_decl->value_node, context)) {
-                    error_container.addError(SEMANTIC_ERRORS::REF_BAD_TARGET(var_decl->name_token, var_decl->name));
-                    break;
+                    // const-корректность: ссылка на const-ячейку допустима, только
+                    // если сама ссылка объявлена `const` (`const ref let b = a;`).
+                    // Иначе запись через ref обошла бы неизменяемость источника.
+                    bool target_const = pathRootIsConst(var_decl->value_node, context);
+                    bool addressable  = isAddressablePath(var_decl->value_node, context);
+                    if (!(target_const && active_mods.Const && addressable)) {
+                        error_container.addError(SEMANTIC_ERRORS::REF_BAD_TARGET(var_decl->name_token, var_decl->name));
+                        break;
+                    }
                 }
                 ref_target_node = var_decl->value_node;
                 // Прямая самопривязка: `ref let a = a;` — цикл из одной ссылки
@@ -4212,14 +4269,20 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                         return new_null();
                     }
                     ContextObject& var = context.get_variable(var_node->name);
-                    // ref-алиас: `r = v` пишет в цель алиаса (проверки Final/Const/Strict
-                    // выполнит writePathValue по пути цели)
-                    if (var.ref_alias_node) {
-                        writePathValue(var.ref_alias_node, context, r, var_node->token);
+                    // const/final-алиас: менять сам алиас нельзя, даже если цель
+                    // изменяема (`const ref let b = a; b = 20;` — ошибка).
+                    if (var.modifiers.Final) {
+                        error_container.addError(DEEP_ERRORS::FINAL_REASSIGNED(var_node->token, var_node->name));
                         return r;
                     }
                     if (var.modifiers.Const) {
                         error_container.addError(DEEP_ERRORS::CONST_REASSIGNED(var_node->token, var_node->name));
+                        return r;
+                    }
+                    // ref-алиас: `r = v` пишет в цель алиаса (проверки Final/Const/Strict
+                    // выполнит writePathValue по пути цели)
+                    if (var.ref_alias_node) {
+                        writePathValue(var.ref_alias_node, context, r, var_node->token);
                         return r;
                     }
                     if (tryAssignDunder(binary_node->l_node, context, var.value, r, var_node->token))
