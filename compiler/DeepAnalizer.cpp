@@ -2673,6 +2673,9 @@ struct ASTDeepAnalyzer {
                     if (fd.default_node)
                         sv = execute(fd.default_node, sym.decl_context);
                     ContextObject sfo(fd.name, sv, sv.T);
+                    // переносим модификаторы поля (strict/final/const) на ячейку
+                    // static-поля: иначе запись `Test::name = ...` не проверяется.
+                    sfo.modifiers = fd.mods;
                     sym.decl_context.add_variable(fd.name, sfo);
                     ContextObject& sstored = sym.decl_context.get_variable(fd.name);
                     sstored.addr = heap.allocate_high(&sstored);
