@@ -541,7 +541,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 return "rt::Box::null()";
             case NodeTypes::NodeString: {
                 auto* n = static_cast<struct NodeString*>(node);
-                if (n->value.size() == 1) {
+                if (n->is_char && n->value.size() == 1) {
                     String c;
                     char32_t ch = n->value[0];
                     if (ch == U'\'') c = "\\'";
@@ -984,7 +984,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 Node* b = nsp->body;
                 while (b && b->type == NodeTypes::NodeModifier)
                     b = static_cast<struct NodeModifier*>(b)->node;
-                String s = "rt::nslit(" + envVar() + ", " + quote(nsp->name.empty() ? String("namespace") : nsp->name)
+                String s = "rt::nslit(" + envVar() + ", " + quote(String("namespace"))
                          + ", std::map<std::string, rt::Box>{";
                 bool first = true;
                 if (b && b->type == NodeTypes::NodeStatementsScope) {
@@ -1531,6 +1531,11 @@ case NodeTypes::NodeStructDeclaration:
                 while (b && b->type == NodeTypes::NodeModifier)
                     b = static_cast<struct NodeModifier*>(b)->node;
                 String s;
+                // именованный namespace как значение: определяем саму переменную `a`,
+                // чтобы `echo a` / `a` давали объект namespace, а не null
+                if (!full.empty())
+                    s += envVar() + ".define(" + quote(full) + ", " + emitExpr(node)
+                       + "); // namespace-значение " + full + "\n";
                 if (b && b->type == NodeTypes::NodeStatementsScope) {
                     for (auto* m : static_cast<struct NodeStatementsScope*>(b)->nodes) {
                         Node* u = m;
@@ -1703,7 +1708,7 @@ case NodeTypes::NodeStructDeclaration:
                 auto* num = static_cast<struct NodeNumber*>(n);
                 return num->is_integer ? String("i64") : String("f64");
             }
-            case NodeTypes::NodeString:  return "str";
+            case NodeTypes::NodeString:  return static_cast<struct NodeString*>(n)->is_char ? "char" : "str";
             case NodeTypes::NodeBool:    return "bool";
             case NodeTypes::NodeNull:    return "null";
             default:                     return "unknown";

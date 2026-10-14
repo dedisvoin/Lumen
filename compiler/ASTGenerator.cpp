@@ -143,7 +143,9 @@ struct ASTGenerator final {
         } else if (walker.CheckType(TokenTypes::STRING)) {
             auto token = walker.safeGet();
             walker.Next();
-            return new struct NodeString(token.value);
+            if (token.is_char && token.value.size() != 1)
+                error_container.addError(SYNTAX_ERRORS::INVALID_CHAR_LITERAL(token, int(token.value.size())));
+            return new struct NodeString(token.value, token.is_char);
         } else if (walker.Check(TokenTypes::KEYWORD, "true") || walker.Check(TokenTypes::KEYWORD, "false")) {
             bool v = walker.safeGet().value == "true";
             walker.Next();
@@ -2160,7 +2162,8 @@ void printNode(Node* node, int level, const std::vector<bool>& levelsStatus, boo
         }
         case NodeTypes::NodeString: {
             auto n = static_cast<struct NodeString*>(node);
-            std::cout << Style("NodeString (\"" + n->value + "\")", TerminalStyle::MAGENTA) << "\n";
+            String q = n->is_char ? String("'") : String("\"");
+            std::cout << Style("NodeString (" + q + n->value + q + ")", TerminalStyle::MAGENTA) << "\n";
             return;
         }
         case NodeTypes::NodeScope: {

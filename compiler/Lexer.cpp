@@ -143,9 +143,11 @@ struct Lexer final {
         if (pos < file_data.size()) next();  // пропускаем закрывающую кавычку
         TypeOfToken type = TypeOfToken::STRING;
 
-        return Token(
+        Token token(
             type, value, {file_path, start_line, start_index, int(value.size()) + 2}
         );
+        token.is_char = (start == U'\'');
+        return token;
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////

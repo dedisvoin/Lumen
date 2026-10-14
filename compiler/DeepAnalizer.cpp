@@ -38,6 +38,7 @@ static String formatValue(const Value& v) {
     if (v.T == Ty::Char) { String s; s += static_cast<char32_t>(v.get<char>()); return s; }
     if (v.T == Ty::Type_) return v.get<Type>().toString();
     if (v.T == Ty::Null)  return "null";
+    if (v.T == Ty::Namespace) return "object(namespace)";
     if (v.T.isCallable()) { String s = "fn "; s += v.get<FunctionContainer>().name; return s; }
     if (v.T.isPointer())  return "0x" + std::to_string(v.get<Pointer>().addr);
     if (v.T.isStruct()) {
@@ -3182,7 +3183,7 @@ if (!isAssignablePath(var_decl->value_node, context)) {
 
             case NodeTypes::NodeString: {
                 auto str_node = static_cast<struct NodeString*>(node);
-                if (str_node->value.size() == 1) {
+                if (str_node->is_char && str_node->value.size() == 1) {
                     return new_char(str_node->value[0]);
                 } else {
                     return new_string(str_node->value);

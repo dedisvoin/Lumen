@@ -575,6 +575,17 @@ namespace SYNTAX_ERRORS {
             .withHint("Hexadecimal literals use the 0x prefix; binary/octal literals are not supported yet.");
     }
 
+    BaseError INVALID_CHAR_LITERAL(const Token token, const int length) noexcept {
+        auto err = BaseError("Char literal must contain exactly one character", token)
+            .withType(MessageType::Warning)
+            .withCode(206)
+            .asWarning()
+            .withHint("A char is a single Unicode character written in single quotes, e.g. 'a'.")
+            .withHint("This literal will be treated as a string ('str').");
+        err.special_message = String("char literal length: ") + String(length);
+        return err;
+    }
+
     BaseError WAITING(const Token token, String wait) {
         return BaseError("Expected '" + wait + "', but found '" + token.value + "'", token)
             .withType(MessageType::SyntaxError)

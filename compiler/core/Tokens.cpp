@@ -62,6 +62,7 @@ struct Token {
     TypeOfToken     type;
     String          value;
     PositionInFile  position;
+    bool            is_char = false;   // STRING-токен набран в одинарных кавычках ('a')
 
     Token() {
         type = TypeOfToken::DUMMY;
@@ -111,7 +112,8 @@ String stringFromTokens(const std::vector<Token>& tokens, const bool ignore_comm
 
         if ((tokens[i].position.line != tokens[i - 1].position.line || tokens[i].position.file_path != tokens[i - 1].position.file_path) && i != 0) result += "\n";
         if (tokens[i].type == TypeOfToken::COMMENT && !ignore_comments)  result += "//";
-        if (tokens[i].type == TypeOfToken::STRING) result += "\"" + tokens[i].value + "\"";
+        if (tokens[i].type == TypeOfToken::STRING)
+            result += tokens[i].is_char ? ("'" + tokens[i].value + "'") : ("\"" + tokens[i].value + "\"");
         else if (tokens[i].type == TypeOfToken::MULTI_COMMENT && !ignore_comments) result += "/*" + tokens[i].value + "*/";
         else result += tokens[i].value;
 
