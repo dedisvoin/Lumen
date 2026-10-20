@@ -1,0 +1,8 @@
+namespace outer {
+    namespace inner {
+        struct S {
+            static let v: i64 = 7;
+        }
+    }
+}
+echo outer::inner::S::v;

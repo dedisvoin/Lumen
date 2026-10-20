@@ -1,0 +1,38 @@
+struct[Ok_T = Null] Ok {
+    strict let res: ?Ok_T;
+    
+    static fn __call__[T](obj: T) -> Ok[T] : {
+        ret Ok[T]{res: obj};
+    }
+    
+    static fn __call__() -> Ok[Null] : {
+        ret Ok[Null]{res: null};
+    }
+    
+    fn __get__(ref self) -> ?Ok_T : {
+        ret self.res;
+    }
+}
+
+fn div[A, B](a: A, b: B) -> Ok[?A | B] : {
+    if (b == 0) {
+        ret Ok();
+    } 
+    ret Ok(a / b);
+}
+
+
+
+
+eval {
+    let res = div(10, 3);
+    echo res?;
+}
+
+
+
+
+
+
+
+

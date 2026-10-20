@@ -1,0 +1,4 @@
+namespace N {
+    enum E { A, B }
+}
+echo N::E::B;

@@ -1,0 +1,8 @@
+namespace N {
+    struct S {
+        static let v: i64 = 1;
+    }
+    enum E { X=9 }
+}
+echo N::S::v;
+echo N::E::X;

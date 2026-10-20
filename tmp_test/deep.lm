@@ -1,0 +1,6 @@
+namespace A {
+    namespace B {
+        enum C { X, Y }
+    }
+}
+echo A::B::C::Y;

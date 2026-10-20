@@ -1,0 +1,7 @@
+namespace N {
+    enum E { A, B }
+    struct S { static let v: i64 = 5; }
+}
+fn fe() -> i64 : ret N::E::A as i64;
+fn fs() -> i64 : ret N::S::v;
+echo fe(); echo fs();

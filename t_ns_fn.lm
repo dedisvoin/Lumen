@@ -1,0 +1,5 @@
+namespace N {
+    enum E { A, B }
+}
+fn f() -> i64 : ret N::E::A;
+echo f();

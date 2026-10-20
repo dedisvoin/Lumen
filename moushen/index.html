@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1c1c1c">
+<title>Lumen — 90 секунд</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"></div>
+<div class="grid-bg" id="gridBg" aria-hidden="true"></div>
+<div class="beam" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<div class="scanline" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="shell">
+
+  <header class="rail rail-top">
+    <div class="rail-brand">
+      <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.11 19.3l-.4.78c-.23.46-.34.69-.5.76a.6.6 0 0 1-.57 0c-.16-.07-.27-.3-.5-.76l-1.2-2.37c-.1-.22-.16-.33-.24-.4a.58.58 0 0 0-.48-.11l-2.6.87c-.51.17-.76.26-.93.2a.6.6 0 0 1-.3-.31c-.06-.17.03-.42.22-.92l.86-2.35c.1-.25.15-.37.13-.49a.6.6 0 0 0-.11-.27c-.07-.09-.19-.14-.43-.25l-2.36-1.07a.34.34 0 0 1 0-.61l2.36-1.07c.24-.11.36-.16.43-.25a.6.6 0 0 0 .11-.27c0-.12-.04-.24-.13-.48l-.86-2.35c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.87c.23.08.35.12.48.1a.58.58 0 0 0 .46-.6l-.6-3.1a.6.6 0 0 1 .9-.65l.96-.54a.34.34 0 0 1 .57.13l1.2 2.37c.1.22.16.33.24.4.07.06.18.1.33.11.1 0 .23.04.45.12l2.39.78c.5.17.76.26.92.2a.6.6 0 0 0 .3-.31c.06-.17-.03-.42-.22-.92l-.87-2.34c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.88c.23.08.35.12.48.1.58-.05.62 1.04.13 1.6l-.82.75.14.13M9.76 10a3.36 3.36 0 0 0 0 4M22 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z"/></svg>
+      <span>lumen</span>
+    </div>
+    <div class="rail-meta">
+      <span class="rail-sec" id="railSec">intro</span>
+      <span class="rail-idx" id="railIdx">—</span>
+      <span class="rail-name" id="railName">язык сквозь поколения</span>
+    </div>
+    <div class="chapter" id="chapter"><i></i><i></i><i></i><i></i><i></i></div>
+  </header>
+
+  <main class="stage" id="stage">
+
+    <!-- 1 · title -->
+    <section class="scene s-title" data-start="0" data-end="4500" data-idx="—" data-sec="intro" data-label="язык сквозь поколения" data-cam="dollyIn">
+      <div class="deco" aria-hidden="true"><span class="deco-glow"></span><span class="deco-num">λ</span></div>
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s">lumen · учебный язык</div>
+        <h1 class="display">
+          <span class="m"><span class="mi"><span class="hl">Lumen</span> —</span></span>
+          <span class="m"><span class="mi">язык сквозь поколения.</span></span>
+        </h1>
+        <p class="lede up" style="--d:.36s">C-подобный синтаксис, вывод типов через <code>let</code> и читаемый C++ на выходе — вместо многословия Pascal и ручной памяти C++.</p>
+        <div class="chips" style="--d:.5s">
+          <span class="chip pop" style="--d:.52s"><span class="dot"></span><b>≈ 4 мс</b> полный анализ</span>
+          <span class="chip pop" style="--d:.62s"><span class="dot"></span><b>0.83 с</b> сборка clang</span>
+          <span class="chip pop" style="--d:.72s"><span class="dot"></span><b>140+</b> понятных ошибок</span>
+          <span class="chip pop" style="--d:.82s"><span class="dot"></span><b>нативный .exe</b></span>
+        </div>
+      </div>
+      <div class="watermark" aria-hidden="true">
+        <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13.11 19.3l-.4.78c-.23.46-.34.69-.5.76a.6.6 0 0 1-.57 0c-.16-.07-.27-.3-.5-.76l-1.2-2.37c-.1-.22-.16-.33-.24-.4a.58.58 0 0 0-.48-.11l-2.6.87c-.51.17-.76.26-.93.2a.6.6 0 0 1-.3-.31c-.06-.17.03-.42.22-.92l.86-2.35c.1-.25.15-.37.13-.49a.6.6 0 0 0-.11-.27c-.07-.09-.19-.14-.43-.25l-2.36-1.07a.34.34 0 0 1 0-.61l2.36-1.07c.24-.11.36-.16.43-.25a.6.6 0 0 0 .11-.27c0-.12-.04-.24-.13-.48l-.86-2.35c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.87c.23.08.35.12.48.1a.58.58 0 0 0 .46-.6l-.6-3.1a.6.6 0 0 1 .9-.65l.96-.54a.34.34 0 0 1 .57.13l1.2 2.37c.1.22.16.33.24.4.07.06.18.1.33.11.1 0 .23.04.45.12l2.39.78c.5.17.76.26.92.2a.6.6 0 0 0 .3-.31c.06-.17-.03-.42-.22-.92l-.87-2.34c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.88c.23.08.35.12.48.1.58-.05.62 1.04.13 1.6l-.82.75.14.13M9.76 10a3.36 3.36 0 0 0 0 4M22 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z"/></svg>
+      </div>
+    </section>
+
+    <!-- 2 · manifest -->
+    <section class="scene s-manifest" data-start="4500" data-end="9500" data-idx="—" data-sec="intro" data-label="манифест" data-cam="truckL">
+      <div class="deco" aria-hidden="true"><span class="deco-num">λ</span></div>
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s">манифест</div>
+        <h2 class="head">
+          <span class="m"><span class="mi">Меньше церемоний.</span></span>
+          <span class="m"><span class="mi">Больше смысла.</span></span>
+        </h2>
+        <p class="lede up" style="--d:.36s">Язык должен помогать думать, а не бороться с синтаксисом. Lumen закрывает разрыв между «научить программировать» и «получить настоящую программу».</p>
+        <div class="metrics">
+          <div class="metric up" style="--d:.5s"><i>анализ</i><b>0.072 мс</b><span>лексер → AST → типы</span></div>
+          <div class="metric up" style="--d:.6s"><i>transpile</i><b>4 мс</b><span>Lumen → читаемый C++</span></div>
+          <div class="metric up" style="--d:.7s"><i>сборка</i><b>0.83 с</b><span>clang → нативный .exe</span></div>
+          <div class="metric up" style="--d:.8s"><i>ошибки</i><b>140+</b><span>кодов с подсказками</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 · legacy -->
+    <section class="scene s-legacy" data-start="9500" data-end="13500" data-idx="01" data-sec="эволюция" data-label="эволюция" data-cam="crane">
+      <div class="deco" aria-hidden="true"><span class="deco-num">01</span></div>
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s">01 · эволюция</div>
+        <h2 class="head">
+          <span class="m"><span class="mi">Два поколения —</span></span>
+          <span class="m"><span class="mi">одна задача.</span></span>
+        </h2>
+        <p class="sub up" style="--d:.4s">Сумма чисел от 1 до 100. Классика, с которой всё начиналось — и то, как это выглядит сегодня.</p>
+        <div class="timeline up" style="--d:.55s">
+          <div class="tl-line"><span class="tl-marker"></span></div>
+          <div class="tl-labels"><span><b>1970</b> · Pascal</span><span class="tl-age">многословно, вручную</span><span><b>2026</b> · Lumen</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 · duel -->
+    <section class="scene s-duel" data-start="13500" data-end="20000" data-idx="01" data-sec="эволюция" data-label="эволюция" data-key="race" data-cam="arcRight">
+      <div class="scene-inner">
+        <div class="duel">
+          <div class="duel-col left" style="--d:.1s">
+            <div class="duel-head"><span class="duel-name">Pascal</span><span class="duel-val"><b data-count="3.8" data-dec="1">0</b> с</span></div>
+            <div class="lane-track"><i class="lane-fill pas"></i></div>
+            <div class="editor">
+              <div class="ebar"><span class="tab">sum.pas</span><span class="tag-l">Pascal</span></div>
+              <pre class="code small"><span class="c-kw">program</span> Sum;
+<span class="c-kw">var</span> i, s: <span class="c-ty">Integer</span>;
+<span class="c-kw">begin</span>
+  s := <span class="c-nu">0</span>;
+  <span class="c-kw">for</span> i := <span class="c-nu">1</span> <span class="c-kw">to</span> <span class="c-nu">100</span> <span class="c-kw">do</span>
+    s := s + i;
+  WriteLn(s);
+<span class="c-kw">end</span>.</pre>
+            </div>
+            <div class="duel-note">компиляция сразу в машинный код</div>
+          </div>
+          <div class="duel-col right" style="--d:.3s">
+            <div class="duel-head"><span class="duel-name"><span class="lang">Lumen</span></span><span class="duel-val ok"><b data-count="4" data-dec="0">0</b> мс</span></div>
+            <div class="lane-track"><i class="lane-fill lum"></i></div>
+            <div class="editor">
+              <div class="ebar"><span class="tab">sum.lm</span><span class="tag-l">Lumen</span></div>
+              <pre class="code small"><span class="c-kw">let</span> s = <span class="c-nu">0</span>;
+<span class="c-kw">for</span> (<span class="c-kw">let</span> i = <span class="c-nu">1</span>; i &lt;= <span class="c-nu">100</span>; i = i + <span class="c-nu">1</span>;) {
+    s = s + i;
+}
+<span class="c-kw">outln</span> s;</pre>
+            </div>
+            <div class="duel-note">транспиляция в C++, дальше clang</div>
+          </div>
+        </div>
+        <div class="foot-facts up" style="--d:.6s">
+          <span>анализ кода <b>≈ 0.072 мс</b></span>
+          <span class="sep"></span>
+          <span>transpile <b>≈ 4 мс</b></span>
+          <span class="sep"></span>
+          <span>сборка clang <b>≈ 0.83 с</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 · punch -->
+    <section class="scene s-punch" data-start="20000" data-end="24000" data-idx="01" data-sec="эволюция" data-label="эволюция" data-cam="pushRoll">
+      <div class="rings" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="deco" aria-hidden="true"><span class="deco-glow"></span></div>
+      <div class="scene-inner" style="text-align:center">
+        <div class="punch zoom" style="--d:.05s"><b>≈ 4</b><span>мс</span></div>
+        <div class="punch-sub up" style="--d:.3s">полный анализ и транспиляция — <b>до</b> запуска <code>clang</code></div>
+      </div>
+    </section>
+
+    <!-- 6 · ex1 -->
+    <section class="scene s-ex" data-start="24000" data-end="28000" data-idx="02" data-sec="возможности" data-label="возможности" data-key="ex1" data-cam="dollyIn">
+      <div class="scene-inner">
+        <div class="ex-grid">
+          <div class="ex-info left" style="--d:.08s">
+            <div class="ex-badge">ex1</div>
+            <h2 class="head"><span class="m"><span class="mi">Переменные</span></span><span class="m"><span class="mi">и вывод типа</span></span></h2>
+            <p class="sub">Тип подставляется сам — новичок пишет только <code>let</code>, а не <code>Integer</code> и объявления.</p>
+            <div class="chips" style="--d:.45s">
+              <span class="chip pop" style="--d:.5s"><span class="dot"></span><b>let</b> → i64</span>
+              <span class="chip pop" style="--d:.6s"><span class="dot"></span><b>"Аня"</b> → str</span>
+              <span class="chip pop" style="--d:.7s"><span class="dot"></span><b>3.14</b> → f64</span>
+            </div>
+          </div>
+          <div class="editor right" style="--d:.22s">
+            <div class="ebar"><span class="tab">ex1.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code ex-code" data-src="ex1"></pre>
+          </div>
+        </div>
+        <div class="out-strip up" style="--d:2s"><span class="play">▶</span><span class="ol">вывод</span><code>5 · Аня · 3.14</code></div>
+      </div>
+    </section>
+
+    <!-- 7 · ex2 -->
+    <section class="scene s-ex" data-start="28000" data-end="32000" data-idx="02" data-sec="возможности" data-label="возможности" data-key="ex2" data-cam="truckL">
+      <div class="scene-inner">
+        <div class="ex-grid">
+          <div class="ex-info left" style="--d:.08s">
+            <div class="ex-badge">ex2</div>
+            <h2 class="head"><span class="m"><span class="mi">Явные типы</span></span><span class="m"><span class="mi">и strict</span></span></h2>
+            <p class="sub"><code>strict let</code> включает проверку типов, когда ученик готов к дисциплине.</p>
+            <div class="chips" style="--d:.45s">
+              <span class="chip pop" style="--d:.5s"><span class="dot"></span><b>i64</b> целое</span>
+              <span class="chip pop" style="--d:.6s"><span class="dot"></span><b>f64</b> дробное</span>
+            </div>
+          </div>
+          <div class="editor right" style="--d:.22s">
+            <div class="ebar"><span class="tab">ex2.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code ex-code" data-src="ex2"></pre>
+          </div>
+        </div>
+        <div class="out-strip up" style="--d:2s"><span class="play">▶</span><span class="ol">вывод</span><code>16</code></div>
+      </div>
+    </section>
+
+    <!-- 8 · ex3 -->
+    <section class="scene s-ex" data-start="32000" data-end="36000" data-idx="02" data-sec="возможности" data-label="возможности" data-key="ex3" data-cam="arcLeft">
+      <div class="scene-inner">
+        <div class="ex-grid">
+          <div class="ex-info left" style="--d:.08s">
+            <div class="ex-badge">ex3</div>
+            <h2 class="head"><span class="m"><span class="mi">Функции</span></span></h2>
+            <p class="sub">Параметры, тип возврата и <code>ret</code> — знакомо каждому, кто писал на C.</p>
+            <div class="chips" style="--d:.45s">
+              <span class="chip pop" style="--d:.5s"><span class="dot"></span><b>fn</b> add(a, b)</span>
+              <span class="chip pop" style="--d:.6s"><span class="dot"></span><b>ret</b> a + b</span>
+            </div>
+          </div>
+          <div class="editor right" style="--d:.22s">
+            <div class="ebar"><span class="tab">ex3.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code ex-code" data-src="ex3"></pre>
+          </div>
+        </div>
+        <div class="out-strip up" style="--d:2s"><span class="play">▶</span><span class="ol">вывод</span><code>5</code></div>
+      </div>
+    </section>
+
+    <!-- 9 · ex4 -->
+    <section class="scene s-ex" data-start="36000" data-end="40000" data-idx="02" data-sec="возможности" data-label="возможности" data-key="ex4" data-cam="truckR">
+      <div class="scene-inner">
+        <div class="ex-grid">
+          <div class="ex-info left" style="--d:.08s">
+            <div class="ex-badge">ex4</div>
+            <h2 class="head"><span class="m"><span class="mi">Структуры</span></span></h2>
+            <p class="sub">Свои типы через <code>struct</code>, доступ к полям — через точку.</p>
+            <div class="chips" style="--d:.45s">
+              <span class="chip pop" style="--d:.5s"><span class="dot"></span><b>struct</b> Point</span>
+              <span class="chip pop" style="--d:.6s"><span class="dot"></span><b>p.x</b> → i64</span>
+            </div>
+          </div>
+          <div class="editor right" style="--d:.22s">
+            <div class="ebar"><span class="tab">ex4.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code ex-code" data-src="ex4"></pre>
+          </div>
+        </div>
+        <div class="out-strip up" style="--d:2s"><span class="play">▶</span><span class="ol">вывод</span><code>3</code></div>
+      </div>
+    </section>
+
+    <!-- 10 · ex5 -->
+    <section class="scene s-ex" data-start="40000" data-end="44000" data-idx="02" data-sec="возможности" data-label="возможности" data-key="ex5" data-cam="dollyIn">
+      <div class="scene-inner">
+        <div class="ex-grid">
+          <div class="ex-info left" style="--d:.08s">
+            <div class="ex-badge">ex5</div>
+            <h2 class="head"><span class="m"><span class="mi">Условия</span></span><span class="m"><span class="mi">и циклы</span></span></h2>
+            <p class="sub"><code>for</code> и <code>if</code> — знакомая логика без <code>begin…end</code>.</p>
+            <div class="chips" style="--d:.45s">
+              <span class="chip pop" style="--d:.5s"><span class="dot"></span><b>for</b> 1…5</span>
+              <span class="chip pop" style="--d:.6s"><span class="dot"></span><b>if</b> i % 2 == 0</span>
+            </div>
+          </div>
+          <div class="editor right" style="--d:.22s">
+            <div class="ebar"><span class="tab">ex5.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code ex-code" data-src="ex5"></pre>
+          </div>
+        </div>
+        <div class="out-strip up" style="--d:2s"><span class="play">▶</span><span class="ol">вывод</span><code>2 · 4</code></div>
+      </div>
+    </section>
+
+    <!-- 11 · ex6 -->
+    <section class="scene s-ex" data-start="44000" data-end="48000" data-idx="02" data-sec="возможности" data-label="возможности" data-key="ex6" data-cam="arcRight">
+      <div class="scene-inner">
+        <div class="ex-grid">
+          <div class="ex-info left" style="--d:.08s">
+            <div class="ex-badge">ex6</div>
+            <h2 class="head"><span class="m"><span class="mi">Ссылки</span></span></h2>
+            <p class="sub"><code>ref let</code> — второе имя для того же значения, а не копия.</p>
+            <div class="chips" style="--d:.45s">
+              <span class="chip pop" style="--d:.5s"><span class="dot"></span><b>ref let</b> alias = base</span>
+              <span class="chip pop" style="--d:.6s"><span class="dot"></span>base меняется</span>
+            </div>
+          </div>
+          <div class="editor right" style="--d:.22s">
+            <div class="ebar"><span class="tab">ex6.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code ex-code" data-src="ex6"></pre>
+          </div>
+        </div>
+        <div class="out-strip up" style="--d:2s"><span class="play">▶</span><span class="ol">вывод</span><code>20</code></div>
+      </div>
+    </section>
+
+    <!-- 12 · cheatsheet -->
+    <section class="scene s-cheat" data-start="48000" data-end="53000" data-idx="02" data-sec="возможности" data-label="шпаргалка" data-cam="truckL">
+      <div class="deco" aria-hidden="true"><span class="deco-num">02</span></div>
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s">шпаргалка</div>
+        <h2 class="head"><span class="m"><span class="mi">Весь синтаксис —</span></span><span class="m"><span class="mi">на одной странице.</span></span></h2>
+        <div class="cheat">
+          <div class="crow fade" style="--d:.2s"><b>переменная</b><code>let x = 5;</code></div>
+          <div class="crow fade" style="--d:.28s"><b>строгий тип</b><code>strict let n: i64 = 0;</code></div>
+          <div class="crow fade" style="--d:.36s"><b>функция</b><code>fn f(a: i64) -&gt; i64</code></div>
+          <div class="crow fade" style="--d:.44s"><b>структура</b><code>struct P { x: i64; }</code></div>
+          <div class="crow fade" style="--d:.52s"><b>условие</b><code>if (x &gt; 0) { … }</code></div>
+          <div class="crow fade" style="--d:.6s"><b>цикл</b><code>for (let i = 0; i &lt; n; i++)</code></div>
+          <div class="crow fade" style="--d:.68s"><b>ссылка</b><code>ref let r = x;</code></div>
+          <div class="crow fade" style="--d:.76s"><b>перечисление</b><code>enum C { Red, Green }</code></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13 · err -->
+    <section class="scene s-err" data-start="53000" data-end="60000" data-idx="03" data-sec="ошибки" data-label="ошибки" data-key="err" data-cam="truckR">
+      <div class="deco" aria-hidden="true"><span class="deco-num">03</span></div>
+      <div class="scene-inner">
+        <div class="err-grid">
+          <div class="left" style="--d:.15s">
+            <article class="errpanel">
+              <div class="err-head"><span class="lang">Lumen</span><span class="meta">sum.lm</span></div>
+              <pre class="err-out"><span class="e-red">error[72] (ExecutableError):</span>
+  <span class="e-cy">--&gt;</span> <span class="e-path">sum.lm:3:8</span>
+   <span class="e-cy">|</span>
+ 2<span class="e-cy"> | </span><span class="e-dim">let names = {"a", "b"};</span>
+ 3<span class="e-cy"> | </span><span class="e-dim">let x = total + names;</span>
+   <span class="e-cy">|</span>         <span class="e-red e-uline">^~~~~~~~~~~~~</span>
+   <span class="e-cy">|</span>         <span class="e-red e-emsg">Unsupported operator '+' for i64 and {str, 2}</span>
+ 4<span class="e-cy"> | </span><span class="e-dim">outln x;</span>
+   <span class="e-cy">|</span>
+   <span class="e-cy">= hint: </span><span class="e-dim">Arithmetic operators require numeric operands.</span></pre>
+            </article>
+            <div class="fix" style="--d:.9s">
+              <div class="err-head"><span class="badge-ok">✓ исправлено</span><span class="meta">sum.lm</span></div>
+              <pre class="err-out"><span class="e-dim">1 | </span>let nums = {10, 20, 30};  <span class="e-dim">// {i64, 3}</span>
+<span class="e-dim">2 | </span>let total = 10 + 20;      <span class="e-dim">// i64 + i64</span>
+<span class="e-dim">3 | </span>outln total;              <span class="e-dim">// 30</span></pre>
+            </div>
+          </div>
+          <div class="err-keys right" style="--d:.3s">
+            <div class="key up" style="--d:.5s"><b>error[72]</b><p>номер ошибки — по нему легко найти причину</p></div>
+            <div class="key up" style="--d:.6s"><b>(ExecutableError)</b><p>тип и этап, где она поймана</p></div>
+            <div class="key up" style="--d:.7s"><b>sum.lm:3:8</b><p>точный адрес: файл, строка, столбец</p></div>
+            <div class="key up" style="--d:.8s"><b>= hint:</b><p>короткая подсказка, что исправить</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 14 · err punch -->
+    <section class="scene s-errpunch" data-start="60000" data-end="63500" data-idx="03" data-sec="ошибки" data-label="ошибки" data-cam="dollyIn">
+      <div class="deco" aria-hidden="true"><span class="deco-num">140+</span></div>
+      <div class="scene-inner" style="text-align:center">
+        <div class="punch zoom" style="--d:.05s"><b>140</b><span>+</span></div>
+        <div class="punch-sub up" style="--d:.3s">понятных кодов ошибок — с номером, адресом и подсказкой</div>
+        <div class="chips" style="justify-content:center; margin-top:1.2rem">
+          <span class="chip pop" style="--d:.5s"><span class="dot"></span>номер</span>
+          <span class="chip pop" style="--d:.6s"><span class="dot"></span>место</span>
+          <span class="chip pop" style="--d:.7s"><span class="dot"></span>подсказка</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 15 · run -->
+    <section class="scene s-run" data-start="63500" data-end="69500" data-idx="04" data-sec="сборка" data-label="сборка" data-key="run" data-cam="pedUp">
+      <div class="deco" aria-hidden="true"><span class="deco-num">04</span></div>
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s">04 · сборка</div>
+        <h2 class="head"><span class="m"><span class="mi">Одна команда —</span></span><span class="m"><span class="mi">и готовый бинарь.</span></span></h2>
+        <div class="run-term up" style="--d:.3s">
+          <div class="ebar"><span class="tab">terminal</span></div>
+          <pre class="run-body"><span class="cline" style="--ld:.0s"><span class="cm"># транспиляция в C++</span></span><span class="cline" style="--ld:.35s"><span class="pm">❯</span> lumenc -f hello.lm -c -o hello.cpp</span><span class="cline" style="--ld:.9s"><span class="out">  ✓ transpile ok · 4 мс</span></span><span class="cline" style="--ld:1.3s"><span class="cm"># нативный .exe</span></span><span class="cline" style="--ld:1.65s"><span class="pm">❯</span> lumenc -f hello.lm -build</span><span class="cline" style="--ld:2.2s"><span class="out">  ✓ hello.exe · clang 0.83 с</span></span><span class="cline" style="--ld:2.6s"><span class="cm"># стадии и тайминги</span></span><span class="cline" style="--ld:2.95s"><span class="pm">❯</span> lumenc -f hello.lm -d</span><span class="cline" style="--ld:3.5s"><span class="out">  lexer 0.02 · ast 0.01 · deep 3 · codegen 1 мс</span></span></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- 16 · cpp -->
+    <section class="scene s-cpp" data-start="69500" data-end="73000" data-idx="04" data-sec="сборка" data-label="сборка" data-cam="arcLeft">
+      <div class="scene-inner">
+        <div class="tr-arrow-row">
+          <article class="card right" style="--d:.1s">
+            <div class="ebar"><span class="tab">hello.lm</span><span class="tag-l">Lumen</span></div>
+            <pre class="code small"><span class="c-co">// одна строка</span>
+<span class="c-kw">outln</span> <span class="c-st">"Привет, Lumen!"</span>;</pre>
+          </article>
+          <div class="tr-arrow zoom" style="--d:.35s">→</div>
+          <article class="card left" style="--d:.45s">
+            <div class="ebar"><span class="tab">out.cpp</span><span class="tag-l">C++</span></div>
+            <pre class="code small"><span class="c-co">// читаемый C++ на выходе</span>
+<span class="c-kw">int</span> <span class="c-fn">main</span>() {
+    rt::<span class="c-fn">println</span>(<span class="c-st">"Привет, Lumen!"</span>);
+    <span class="c-kw">return</span> <span class="c-nu">0</span>;
+}</pre>
+          </article>
+        </div>
+        <div class="exe-chip up" style="--d:.8s"><span class="ok">✓</span> hello.exe · нативный бинарь без виртуальной машины</div>
+      </div>
+    </section>
+
+    <!-- 17 · pipe -->
+    <section class="scene s-pipe" data-start="73000" data-end="78000" data-idx="04" data-sec="сборка" data-label="пайплайн" data-cam="truckR">
+      <div class="scene-inner">
+        <div class="pipe-head up" style="--d:.05s"><span>Пайплайн транспиляции</span><span class="pipe-total">полный цикл анализа ≈ 4 мс</span></div>
+        <div class="pipe-flow">
+          <span class="pnode pop" style="--d:.15s"><b>file.lm</b><i>вход</i></span><span class="parrow zoom" style="--d:.3s">→</span>
+          <span class="pnode pop" style="--d:.38s"><b>Lexer</b><i>36 токенов</i></span><span class="parrow zoom" style="--d:.53s">→</span>
+          <span class="pnode pop" style="--d:.61s"><b>Preprocessor</b><i>#include</i></span><span class="parrow zoom" style="--d:.76s">→</span>
+          <span class="pnode pop" style="--d:.84s"><b>AST</b><i>3 узла</i></span><span class="parrow zoom" style="--d:.99s">→</span>
+          <span class="pnode pop" style="--d:1.07s"><b>Deep</b><i>0.003 с</i></span><span class="parrow zoom" style="--d:1.22s">→</span>
+          <span class="pnode lum pop" style="--d:1.3s"><b>CodeGen</b><i>out.cpp · 14 строк</i></span><span class="parrow zoom" style="--d:1.45s">→</span>
+          <span class="pnode ext pop" style="--d:1.53s"><b>clang</b><i>нативный .exe</i></span>
+        </div>
+        <div class="foot-facts up" style="--d:1.7s">
+          <span>лексер <b>0.02 мс</b></span><span class="sep"></span>
+          <span>AST <b>0.01 мс</b></span><span class="sep"></span>
+          <span>deep <b>3 мс</b></span><span class="sep"></span>
+          <span>codegen <b>1 мс</b></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 18 · school -->
+    <section class="scene s-school" data-start="78000" data-end="82000" data-idx="05" data-sec="для школы" data-label="для школы" data-cam="pedUp">
+      <div class="deco" aria-hidden="true"><span class="deco-num">05</span></div>
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s">05 · для школы</div>
+        <h2 class="head"><span class="m"><span class="mi">Язык, который можно</span></span><span class="m"><span class="mi">давать в класс.</span></span></h2>
+        <div class="final-grid" style="margin-top:1.2rem">
+          <div class="fcard pop" style="--d:.2s"><b>Понятные ошибки</b><p>номер, место и подсказка — школьник чинит сам.</p></div>
+          <div class="fcard pop" style="--d:.3s"><b>Один файл</b><p>без ручной настройки сборки и десятков инструментов.</p></div>
+          <div class="fcard pop" style="--d:.4s"><b>Нативная скорость</b><p>на выходе .exe — как у C++, без виртуальной машины.</p></div>
+          <div class="fcard pop" style="--d:.5s"><b>Открыто и бесплатно</b><p>один <code>lumenc.exe</code> для Windows, репозиторий на GitHub.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 19 · stats -->
+    <section class="scene s-stats" data-start="82000" data-end="86000" data-idx="05" data-sec="для школы" data-label="цифры" data-cam="dollyIn">
+      <div class="scene-inner">
+        <div class="kick up" style="--d:.05s; text-align:center">проверено на практике</div>
+        <div class="stats">
+          <div class="stat up" style="--d:.1s"><b data-count="110">0</b><span>автотестов пройдено</span></div>
+          <div class="stat up" style="--d:.2s"><b data-count="66">0</b><span>регресс-проверок</span></div>
+          <div class="stat up" style="--d:.3s"><b data-count="0">0</b><span>ложных диагностик</span></div>
+          <div class="stat up" style="--d:.4s"><b data-count="140" data-suffix="+">0</b><span>кодов ошибок</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 20 · final -->
+    <section class="scene s-final" data-start="86000" data-end="90000" data-idx="—" data-sec="lumen" data-label="lumen" data-key="final" data-cam="dollyOut">
+      <div class="deco" aria-hidden="true"><span class="deco-glow"></span></div>
+      <div class="scene-inner fm">
+        <div class="fm-line up" style="--d:.1s"></div>
+        <div class="fm-brand zoom" style="--d:.25s">
+          <svg class="logo xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.11 19.3l-.4.78c-.23.46-.34.69-.5.76a.6.6 0 0 1-.57 0c-.16-.07-.27-.3-.5-.76l-1.2-2.37c-.1-.22-.16-.33-.24-.4a.58.58 0 0 0-.48-.11l-2.6.87c-.51.17-.76.26-.93.2a.6.6 0 0 1-.3-.31c-.06-.17.03-.42.22-.92l.86-2.35c.1-.25.15-.37.13-.49a.6.6 0 0 0-.11-.27c-.07-.09-.19-.14-.43-.25l-2.36-1.07a.34.34 0 0 1 0-.61l2.36-1.07c.24-.11.36-.16.43-.25a.6.6 0 0 0 .11-.27c0-.12-.04-.24-.13-.48l-.86-2.35c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.87c.23.08.35.12.48.1a.58.58 0 0 0 .46-.6l-.6-3.1a.6.6 0 0 1 .9-.65l.96-.54a.34.34 0 0 1 .57.13l1.2 2.37c.1.22.16.33.24.4.07.06.18.1.33.11.1 0 .23.04.45.12l2.39.78c.5.17.76.26.92.2a.6.6 0 0 0 .3-.31c.06-.17-.03-.42-.22-.92l-.87-2.34c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.88c.23.08.35.12.48.1.58-.05.62 1.04.13 1.6l-.82.75.14.13M9.76 10a3.36 3.36 0 0 0 0 4M22 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z"/></svg>
+          <span class="word">lumen</span>
+        </div>
+        <div class="fm-tag up" style="--d:.5s">язык сквозь поколения</div>
+        <div class="fm-cta up" style="--d:.7s"><span class="dl">Скачать lumenc.exe</span> <span class="ar">→</span> <span class="repo">github.com/dedisvoin/Lumen</span></div>
+        <div class="fm-credits up" style="--d:.9s">lumen · 2026 · open source</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="rail rail-foot">
+    <div class="progress"><i id="progressFill"></i></div>
+    <div class="foot-row">
+      <span class="tc" id="timecode">0:00 / 1:30</span>
+      <span class="hint">ПРОБЕЛ — заново · F — на весь экран · M — звук</span>
+    </div>
+  </footer>
+</div>
+
+<div class="gate" id="gate">
+  <div class="gate-inner">
+    <svg class="logo xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.11 19.3l-.4.78c-.23.46-.34.69-.5.76a.6.6 0 0 1-.57 0c-.16-.07-.27-.3-.5-.76l-1.2-2.37c-.1-.22-.16-.33-.24-.4a.58.58 0 0 0-.48-.11l-2.6.87c-.51.17-.76.26-.93.2a.6.6 0 0 1-.3-.31c-.06-.17.03-.42.22-.92l.86-2.35c.1-.25.15-.37.13-.49a.6.6 0 0 0-.11-.27c-.07-.09-.19-.14-.43-.25l-2.36-1.07a.34.34 0 0 1 0-.61l2.36-1.07c.24-.11.36-.16.43-.25a.6.6 0 0 0 .11-.27c0-.12-.04-.24-.13-.48l-.86-2.35c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.87c.23.08.35.12.48.1a.58.58 0 0 0 .46-.6l-.6-3.1a.6.6 0 0 1 .9-.65l.96-.54a.34.34 0 0 1 .57.13l1.2 2.37c.1.22.16.33.24.4.07.06.18.1.33.11.1 0 .23.04.45.12l2.39.78c.5.17.76.26.92.2a.6.6 0 0 0 .3-.31c.06-.17-.03-.42-.22-.92l-.87-2.34c-.19-.5-.28-.76-.22-.93a.6.6 0 0 1 .3-.31c.17-.06.42.03.93.2l2.6.88c.23.08.35.12.48.1.58-.05.62 1.04.13 1.6l-.82.75.14.13M9.76 10a3.36 3.36 0 0 0 0 4M22 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z"/></svg>
+    <h1 class="gate-title">lumen</h1>
+    <p class="gate-sub">Учебный язык, который транспилируется в C++</p>
+    <button class="gate-btn" id="startBtn" type="button"><span>Смотреть</span><b>1:30</b></button>
+    <div class="gate-hint">звук синтезируется в браузере · <b>M</b> — выключить · <b>F</b> — на весь экран</div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

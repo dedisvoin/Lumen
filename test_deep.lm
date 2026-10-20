@@ -1,0 +1,8 @@
+namespace A {
+    namespace B {
+        struct C {
+            static let val: i64 = 42;
+        }
+    }
+}
+echo A::B::C::val;
