@@ -133,7 +133,7 @@ _LUMEN_KEYWORDS = {
     "ret", "assert", "lambda", "do", "is", "as", "ptr",
     "struct", "enum", "namespace", "fn", "continue", "break",
     "new", "del", "typeof", "sizeof", "out", "outln", "input", "exit",
-    "append", "reserve", "typeis", "mod",
+    "append", "reserve", "typeis", "mod", "eval",
     "__LINE__", "__FILE__", "__LUMEN__",
 }
 _LUMEN_MODIFIERS = {

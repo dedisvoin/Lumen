@@ -1,5 +1,5 @@
 {
-  "name": "Run Lumen (debug)",
-  "commands": "lumenc -f @AT_FILE -d -build\nout",
+  "name": "Run bench",
+  "commands": "lumenc -f @AT_FILE -d -build -bench\nout",
   "type": "Other"
 }

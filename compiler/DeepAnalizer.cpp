@@ -10,20 +10,27 @@
 #include <memory>
 #include <algorithm>
 #include <iostream>
+#include <cstdio>
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
+// Маркер value-generic структуры без конкретного значения: символический
+// инстанс в сигнатуре метода (`self: Box[T, N]`, `-> Vec[T, Size]`). Реальные
+// значения таких инстансов всегда конкретны, поэтому маркер ни с чем не
+// сравнивается — он лишь заполняет слот, чтобы сохранить выравнивание аргументов.
+static const long long SYMBOLIC_VALUE_GENERIC = -9223372036854775807LL - 1;
 
 
+#include "core/InlayHint.cpp"
 
-
-struct InlayHintData {
-    int line;
-    int character;
-    String label;
-};
+// Печать адреса указателя: «0x» + hex (нижний регистр): ptr(0x1000,i64) -> 0x1000.
+static String formatAddr(uint64_t a) {
+    char buf[2 + 16 + 1];
+    std::snprintf(buf, sizeof(buf), "0x%llx", static_cast<unsigned long long>(a));
+    return String(buf);
+}
 
 // РџРµС‡Р°С‚СЊ Р·РЅР°С‡РµРЅРёСЏ (РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ echo/outln Рё РІР»РѕР¶РµРЅРѕ РґР»СЏ РјР°СЃСЃРёРІРѕРІ/РєРѕСЂС‚РµР¶РµР№).
 static String formatValue(const Value& v) {
@@ -40,7 +47,7 @@ static String formatValue(const Value& v) {
     if (v.T == Ty::Null)  return "null";
     if (v.T == Ty::Namespace) return "object(namespace)";
     if (v.T.isCallable()) { String s = "fn "; s += v.get<FunctionContainer>().name; return s; }
-    if (v.T.isPointer())  return "0x" + std::to_string(v.get<Pointer>().addr);
+    if (v.T.isPointer())  return formatAddr(v.get<Pointer>().addr);
     if (v.T.isStruct()) {
         return "object(" + v.T.name + ")";
     }
@@ -276,6 +283,11 @@ struct ASTDeepAnalyzer {
     int supp_ret_mismatch = 0;
     int iter_budget = 10000;        // РѕР±С‰РёР№ Р±СЋРґР¶РµС‚ РёС‚РµСЂР°С†РёР№ РЅР° РЅР°Р±РѕСЂ РІР»РѕР¶РµРЅРЅС‹С… С†РёРєР»РѕРІ
     bool budget_exhausted = false;
+    // Липкий флаг: срабатывал ли хоть раз бюджет итераций/вызовов за весь прогон.
+    // budget_exhausted/call_budget_exhausted сбрасываются на каждом цикле/функции,
+    // поэтому для внешних потребителей (напр. -bench, где важно знать, что
+    // интерпретатор оборвал программу) нужен отдельный невосстанавливаемый признак.
+    bool any_budget_hit = false;
     int call_depth = 0;             // РіР»СѓР±РёРЅР° РІС‹Р·РѕРІРѕРІ С„СѓРЅРєС†РёР№ (Р·Р°С‰РёС‚Р° РѕС‚ Р±РµСЃРєРѕРЅРµС‡РЅРѕР№ СЂРµРєСѓСЂСЃРёРё)
     // Бюджет вызовов функций за один top-level оператор: глубокий анализ —
     // best-effort, дорогие вычисления (напр. наивная рекурсия fib(30) ~2.7M
@@ -290,9 +302,25 @@ struct ASTDeepAnalyzer {
     // внешние C++-функции (extern fn / #cppinclude) вызвать нельзя — даём ошибку.
     bool interpret_mode = false;
 
+    // LSP: собрать только символьные таблицы (structs/enums/globals), НЕ
+    // прокручивая тела циклов. Редактор не должен зависеть от времени работы
+    // программы: типы/хинты считает TypeAnalyzer, а циклы нужны только для
+    // побочных эффектов, которых анализ не требует.
+    bool symbols_only = false;
+
     // имена уже заявленных extern-функций (дубликаты — ошибка)
     std::vector<String> extern_fns;
     static const int CALL_BUDGET_LIMIT = 50000;
+
+    // M8: драйвер `eval { ... }`. eval_only — исполнить только собранные
+    // top-level eval-блоки (+ объявления), не весь файл. in_eval/eval_budget_shared
+    // включают семантику блока: запреты (input/extern) и общий per-block бюджет
+    // итераций (сбрасывается один раз на блок, не на каждый цикл).
+    std::vector<Node*> eval_blocks;
+    bool eval_only = false;
+    bool in_eval = false;
+    bool eval_budget_shared = false;
+    static const int EVAL_LOOP_BUDGET = 10000;
     // Граница dry-прогона мёртвой ветки `if` (кадр scratch). Записи в переменные,
     // которые разрешаются ВЫШЕ этого кадра (в живой цепочке parent), сохранять
     // нельзя: мёртвая ветка исполняется только для сбора ошибок, а её эффекты
@@ -1059,6 +1087,25 @@ struct ASTDeepAnalyzer {
                     new_cells.push_back(std::move(co_cell));
                     return ptr;
                 }
+                // массив как type-значение: typeof(arr)::type / ::size
+                if (lt.isArray() && !lt.container_1.empty()) {
+                    if (member_name == "type") {
+                        auto co_cell = std::make_unique<ContextObject>(
+                            member_name, new_type(lt.container_1[0]), Ty::Null);
+                        co_cell->addr = heap.allocate_high(co_cell.get());
+                        auto* ptr = co_cell.get();
+                        new_cells.push_back(std::move(co_cell));
+                        return ptr;
+                    }
+                    if (member_name == "size") {
+                        auto co_cell = std::make_unique<ContextObject>(
+                            member_name, new_i64(lt.size), Ty::Null);
+                        co_cell->addr = heap.allocate_high(co_cell.get());
+                        auto* ptr = co_cell.get();
+                        new_cells.push_back(std::move(co_cell));
+                        return ptr;
+                    }
+                }
             }
             error_container.addError(DEEP_ERRORS::SCOPE_RESOLUTION_NOT_NAMESPACE(sr->member_token, lv.T.toString()));
             return nullptr;
@@ -1239,12 +1286,28 @@ struct ASTDeepAnalyzer {
                     tok, bv.T.toString()));
                 return false;
             }
-            if (!is_type && !isIntegerType(bv.T)) {
+            // Символический value-генералик структуры в сигнатуре метода
+            // (`fn f(self: Box[T, N])`, `-> Vec[T, Size]`): на этапе декларации
+            // конкретное значение ещё неизвестно и представлено как Type(BASE, имя)
+            // (см. регистрацию generic-имён структуры в decl_context). Оно
+            // конкретизируется на вызове по типу получателя (bindingsForType), а
+            // реифицированный тип-шаблон нужен лишь для typeof — поэтому кодируем
+            // значение маркером, а не ошибкой error[107].
+            bool symbolic_value = false;
+            if (!is_type && !isIntegerType(bv.T) && bv.T == Ty::Type_) {
+                const Type& svt = bv.get<Type>();
+                symbolic_value = svt.type == TypeType::BASE && svt.name == gp.name;
+            }
+            if (!is_type && !isIntegerType(bv.T) && !symbolic_value) {
                 error_container.addError(DEEP_ERRORS::STRUCT_VALUE_GENERIC_TYPE(
                     tok, gp.name, bv.T.toString()));
                 return false;
             }
             bindings.push_back(bv);
+            if (symbolic_value) {
+                vargs.push_back(SYMBOLIC_VALUE_GENERIC);
+                continue;
+            }
             if (is_type) {
                 targs.push_back(bv.get<Type>());
                 mask |= (1u << static_cast<unsigned>(i));
@@ -3043,6 +3106,9 @@ if (!isAssignablePath(var_decl->value_node, context)) {
                 // Интерпретатор (-r) её выполнить не может — ошибка на этапе вызова
                 // (см. call_body); здесь лишь контролируем дубликаты имени.
                 if (func_node->is_extern) {
+                    // M8: объявление extern-функции внутри `eval` запрещено.
+                    if (in_eval)
+                        error_container.addError(DEEP_ERRORS::EVAL_NOT_CONST(func_node->name_token, "an 'extern fn' declaration"));
                     for (const auto& en : extern_fns)
                         if (en == func_node->name) {
                             error_container.addError(DEEP_ERRORS::EXTERN_REDECLARED(func_node->name_token, func_node->name));
@@ -3708,6 +3774,10 @@ case NodeTypes::NodeUnaryPlus: {
                 Value dund = new_null();
                 if (tryDunder("__eq__", left, {right}, context, binary_node->start, binary_node->end, dund)) return dund;
 
+                // Числовое равенство с приведением: 1 == 1.0 -> true (согласовано с порядком <).
+                if (isNumberType(left.T) && isNumberType(right.T))
+                    return new_bool(getNumberFromType<>(left) == getNumberFromType<>(right));
+
                 if (left.T != right.T)
                     return new_bool(false);
 
@@ -3737,6 +3807,10 @@ case NodeTypes::NodeUnaryPlus: {
                 Value right = execute(binary_node->r_node, context);
                 Value dund = new_null();
                 if (tryDunder("__ne__", left, {right}, context, binary_node->start, binary_node->end, dund)) return dund;
+
+                // Числовое неравенство с приведением: 1 != 1.0 -> false.
+                if (isNumberType(left.T) && isNumberType(right.T))
+                    return new_bool(getNumberFromType<>(left) != getNumberFromType<>(right));
 
                 if (left.T != right.T)
                     return new_bool(true);
@@ -3773,12 +3847,6 @@ case NodeTypes::NodeUnaryPlus: {
                         return new_bool(false);
                     }
                     return new_bool(getNumberFromType<>(left) < getNumberFromType<>(right));
-                } else if (left.T == Ty::Str) {
-                    if (right.T != Ty::Str) {
-                        error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), right.T.toString(), "<"));
-                        return new_bool(false);
-                    }
-                    return new_bool(left.get<String>().size() < right.get<String>().size());
                 } else if (left.T.isEnum()) {
                     return new_bool(left.get<long long>() < right.get<long long>());
                 } else {
@@ -3800,12 +3868,6 @@ case NodeTypes::NodeUnaryPlus: {
                         return new_bool(false);
                     }
                     return new_bool(getNumberFromType<>(left) > getNumberFromType<>(right));
-                } else if (left.T == Ty::Str) {
-                    if (right.T != Ty::Str) {
-                        error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), right.T.toString(), ">"));
-                        return new_bool(false);
-                    }
-                    return new_bool(left.get<String>().size() > right.get<String>().size());
                 } else if (left.T.isEnum()) {
                     return new_bool(left.get<long long>() > right.get<long long>());
                 } else {
@@ -3827,12 +3889,6 @@ case NodeTypes::NodeUnaryPlus: {
                         return new_bool(false);
                     }
                     return new_bool(getNumberFromType<>(left) <= getNumberFromType<>(right));
-                } else if (left.T == Ty::Str) {
-                    if (right.T != Ty::Str) {
-                        error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), right.T.toString(), "<="));
-                        return new_bool(false);
-                    }
-                    return new_bool(left.get<String>().size() <= right.get<String>().size());
                 } else if (left.T.isEnum()) {
                     return new_bool(left.get<long long>() <= right.get<long long>());
                 } else {
@@ -3854,12 +3910,6 @@ case NodeTypes::NodeUnaryPlus: {
                         return new_bool(false);
                     }
                     return new_bool(getNumberFromType<>(left) >= getNumberFromType<>(right));
-                } else if (left.T == Ty::Str) {
-                    if (right.T != Ty::Str) {
-                        error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), right.T.toString(), ">="));
-                        return new_bool(false);
-                    }
-                    return new_bool(left.get<String>().size() >= right.get<String>().size());
                 } else if (left.T.isEnum()) {
                     return new_bool(left.get<long long>() >= right.get<long long>());
                 } else {
@@ -3871,23 +3921,35 @@ case NodeTypes::NodeUnaryPlus: {
             case NodeTypes::NodeBinaryLogicalAnd: {
                 auto binary_node = static_cast<struct NodeBinaryLogicalAnd*>(node);
                 Value left = execute(binary_node->l_node, context);
+                if (left.T != Ty::Bool) {
+                    error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), left.T.toString(), "&&"));
+                    return new_bool(false);
+                }
+                // короткое замыкание: левый false => правый не вычисляется
+                if (!left.get<bool>()) return new_bool(false);
                 Value right = execute(binary_node->r_node, context);
-                if (left.T != Ty::Bool || right.T != Ty::Bool) {
+                if (right.T != Ty::Bool) {
                     error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), right.T.toString(), "&&"));
                     return new_bool(false);
                 }
-                return new_bool(left.get<bool>() && right.get<bool>());
+                return new_bool(right.get<bool>());
             }
 
             case NodeTypes::NodeBinaryLogicalOr: {
                 auto binary_node = static_cast<struct NodeBinaryLogicalOr*>(node);
                 Value left = execute(binary_node->l_node, context);
+                if (left.T != Ty::Bool) {
+                    error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), left.T.toString(), "||"));
+                    return new_bool(false);
+                }
+                // короткое замыкание: левый true => правый не вычисляется
+                if (left.get<bool>()) return new_bool(true);
                 Value right = execute(binary_node->r_node, context);
-                if (left.T != Ty::Bool || right.T != Ty::Bool) {
+                if (right.T != Ty::Bool) {
                     error_container.addError(DEEP_ERRORS::BINARY_COMPARE_INVALID_TYPE(binary_node->start, binary_node->end, left.T.toString(), right.T.toString(), "||"));
                     return new_bool(false);
                 }
-                return new_bool(left.get<bool>() || right.get<bool>());
+                return new_bool(right.get<bool>());
             }
 
             // a ?? b  ->  b, если a == null, иначе a. Тип результата — тип a без Null,
@@ -3895,19 +3957,19 @@ case NodeTypes::NodeUnaryPlus: {
             case NodeTypes::NodeBinaryNullCoalesce: {
                 auto nc = static_cast<struct NodeBinaryNullCoalesce*>(node);
                 Value left = execute(nc->l_node, context);
-                Value right = execute(nc->r_node, context);
 
                 Type result = left.T;   // ниже перезаписывается во всех ветках
                 bool left_is_null = false;
-                if (left.T.is_any || left.T.is_auto || left.T == Ty::Null) {
-                    result = right.T;
-                    left_is_null = (left.T == Ty::Null);
+                bool needs_right_type = false;   // any/auto: тип результата берётся из правой
+                if (left.T.is_any || left.T.is_auto) {
+                    needs_right_type = true;
+                } else if (left.T == Ty::Null) {
+                    left_is_null = true;
                 } else if (left.T.isUnion()) {
                     std::vector<Type> members;
                     for (const auto& m : left.T.container_1)
                         if (!m.is_any && !(m == Ty::Null)) members.push_back(m);
                     if (members.empty()) {
-                        result = right.T;
                         left_is_null = true;
                     } else if (members.size() == 1) {
                         result = members[0];
@@ -3917,8 +3979,17 @@ case NodeTypes::NodeUnaryPlus: {
                     }
                 } // иначе result = left.T: левая не nullable, '??' ничего не меняет
 
-                // Значение на этапе анализа: null слева -> берём правую, иначе оставляем левую.
-                if (left_is_null || left.raw().type() == typeid(Null)) return right;
+                // Правая часть вычисляется лениво — только если левая null/неизвестна.
+                // null слева -> берём правую, иначе оставляем левую.
+                bool raw_is_null = (left.raw().type() == typeid(Null));
+                if (left_is_null || raw_is_null) {
+                    Value right = execute(nc->r_node, context);
+                    return right;
+                }
+                if (needs_right_type) {
+                    Value right = execute(nc->r_node, context);
+                    return Value(right.T, left.raw());
+                }
                 return Value(result, left.raw());
             }
 
@@ -4044,7 +4115,12 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
 
             case NodeTypes::NodeInput: {
                 auto* input_node = static_cast<struct NodeInput*>(node);
-                error_container.addError(DEEP_ERRORS::INPUT_RUNTIME(input_node->token_start, input_node->token_end));
+                // M8: внутри `eval` ввод запрещён (блок вычисляется на этапе
+                // анализа) — отдельная диагностика EVAL_NOT_CONST.
+                if (in_eval)
+                    error_container.addError(DEEP_ERRORS::EVAL_NOT_CONST(input_node->token_start, "'input'"));
+                else
+                    error_container.addError(DEEP_ERRORS::INPUT_RUNTIME(input_node->token_start, input_node->token_end));
                 if (input_node->prompt) {
                     Value pv = execute(input_node->prompt, context);
                     if (pv.T != Ty::Str && pv.T != Ty::Char) {
@@ -4242,6 +4318,28 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                 long long count = static_cast<long long>(getNumberFromType<>(cv));
                 reserveInPlace(reserve_node->array_expr, context, reserve_node->token, count);
                 break;
+            }
+
+            case NodeTypes::NodeEvalBlock: {
+                // M8: тело eval исполняется в глобальном контексте (top-level).
+                // На время блока включаем семантику eval: запрет input/extern,
+                // общий per-block бюджет итераций (не сбрасывается на каждом цикле).
+                auto* ev = static_cast<struct NodeEvalBlock*>(node);
+                if (!ev->body) return new_null();
+                bool saved_in_eval = in_eval;
+                bool saved_shared = eval_budget_shared;
+                int  saved_budget = iter_budget;
+                bool saved_exhausted = budget_exhausted;
+                in_eval = true;
+                eval_budget_shared = true;
+                iter_budget = EVAL_LOOP_BUDGET;   // свежий бюджет на блок
+                budget_exhausted = false;
+                Value result = execute(ev->body, context);
+                in_eval = saved_in_eval;
+                eval_budget_shared = saved_shared;
+                iter_budget = saved_budget;
+                budget_exhausted = saved_exhausted;
+                return result;
             }
 
             case NodeTypes::NodeBinaryAssignment: {
@@ -4907,13 +5005,19 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
 
             case NodeTypes::NodeWhile: {
                 auto* w = static_cast<struct NodeWhile*>(node);
+                // LSP (symbols_only): тела циклов не прокручиваем — только
+                // собираем символы. Типы/хинты даёт TypeAnalyzer. Исключение —
+                // циклы внутри `eval`: их исполняет драйвер eval (нужны значения).
+                if (symbols_only && !in_eval) break;
                 loop_depth++;
-                if (loop_depth == 1) { iter_budget = 10000; budget_exhausted = false; }
+                if (loop_depth == 1 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }
                 while (true) {
                     if (budget_exhausted) break;
                     if (--iter_budget < 0) {
                         budget_exhausted = true;
-                        error_container.addError(DEEP_ERRORS::LOOP_NOT_TERMINATING(w->token));
+                        any_budget_hit = true;
+                        if (in_eval) error_container.addError(DEEP_ERRORS::EVAL_BUDGET_EXCEEDED(w->token));
+                        else error_container.addError(DEEP_ERRORS::LOOP_NOT_TERMINATING(w->token));
                         break;
                     }
                     if (control_flow != ControlFlow::None) break;
@@ -4932,12 +5036,13 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     if (control_flow == ControlFlow::Return_)   { break; }
                 }
                 loop_depth--;
-                if (loop_depth == 0) { iter_budget = 10000; budget_exhausted = false; }
+                if (loop_depth == 0 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }
                 break;
             }
 
             case NodeTypes::NodeFor: {
                 auto* f = static_cast<struct NodeFor*>(node);
+                if (symbols_only && !in_eval) break;   // LSP: тела циклов не прокручиваем (кроме eval)
                 // C++/Rust: переменная инициализации живёт в области видимости
                 // цикла (init/check/update), тело — свежая область на итерацию.
                 // После цикла `let i` из init недоступна снаружи.
@@ -4947,12 +5052,14 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                 loop_ctx.parent = &context;
                 if (f->init) execute(f->init, loop_ctx);
                 loop_depth++;
-                if (loop_depth == 1) { iter_budget = 10000; budget_exhausted = false; }
+                if (loop_depth == 1 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }
                 while (true) {
                     if (budget_exhausted) break;
                     if (--iter_budget < 0) {
                         budget_exhausted = true;
-                        error_container.addError(DEEP_ERRORS::LOOP_NOT_TERMINATING(f->token));
+                        any_budget_hit = true;
+                        if (in_eval) error_container.addError(DEEP_ERRORS::EVAL_BUDGET_EXCEEDED(f->token));
+                        else error_container.addError(DEEP_ERRORS::LOOP_NOT_TERMINATING(f->token));
                         break;
                     }
                     if (control_flow != ControlFlow::None) break;
@@ -4970,7 +5077,7 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     if (f->update) execute(f->update, loop_ctx);
                 }
                 loop_depth--;
-                if (loop_depth == 0) { iter_budget = 10000; budget_exhausted = false; }
+                if (loop_depth == 0 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }
                 break;
             }
 
@@ -5026,6 +5133,10 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     // typeis(...) — статический (объявленный) тип как Type-значение.
                     Type st = staticTypeOfExpr(t->expr, context);
                     Value result = new_type(st);
+                    if (st.isArray() && !st.container_1.empty()) {
+                        t->static_type_elem = st.container_1[0].toString();
+                        t->has_static_elem = true;
+                    }
                     String repr = formatValue(result);
                     if (!t->has_static_type) {
                         t->static_type = repr;
@@ -5040,6 +5151,10 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                 std::vector<Value> empty_args;
                 Value dd(Ty::Null, nullptr);
                 Value result = new_type(v.T);
+                if (v.T.isArray() && !v.T.container_1.empty()) {
+                    t->static_type_elem = v.T.container_1[0].toString();
+                    t->has_static_elem = true;
+                }
                 if (tryDunder("__typeof__", v, empty_args, context, t->token, t->token, dd))
                     result = dd;
                 String repr = formatValue(result);
@@ -5147,6 +5262,11 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                         if (target == Ty::f32) return new_f32(static_cast<float>(num));
                         if (target == Ty::f64) return new_f64(num);
                     }
+                }
+
+                // numeric -> bool (ненулевое значение -> true), согласовано с rt::truthy/cast
+                if (isNumberType(src) && target == Ty::Bool) {
+                    return new_bool(getNumberFromType<double>(lv) != 0);
                 }
 
                 // integer -> float
@@ -5776,6 +5896,7 @@ recv_value = execute(ma->l_node, context);
 
         if (++call_depth > CALL_DEPTH_LIMIT) {
             error_container.addError(DEEP_ERRORS::CALL_RECURSION_LIMIT(call->open_token, fn.name));
+            any_budget_hit = true;
             --call_depth;
             // РЅРµР№С‚СЂР°Р»СЊРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ РѕР¶РёРґР°РµРјРѕРіРѕ С‚РёРїР°: СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ РІС‹Р·РѕРІ В«РѕР±СЂРµР·Р°РµС‚СЃСЏВ»,
             // Рё ret РЅР° РєР°Р¶РґРѕРј СѓСЂРѕРІРЅРµ РѕР±СЏР·Р°РЅ СѓРІРёРґРµС‚СЊ С‚РёРї СЃРІРѕРµР№ РґРµРєР»Р°СЂР°С†РёРё (Р° РЅРµ Null)
@@ -5786,6 +5907,7 @@ recv_value = execute(ma->l_node, context);
         // значение объявленного типа (лучше, чем продолжать экспоненциальную рекурсию)
         if (call_budget_exhausted || --call_budget < 0) {
             call_budget_exhausted = true;
+            any_budget_hit = true;
             if (!call_budget_warned) {
                 call_budget_warned = true;
                 error_container.addError(DEEP_ERRORS::CALL_BUDGET_EXHAUSTED(call->open_token, fn.name));
@@ -6107,7 +6229,6 @@ recv_value = execute(ma->l_node, context);
 
 void operator()() {
 #ifdef _WIN32
-        // Р“Р»СѓР±РѕРєРёР№ Р°РЅР°Р»РёР· РёСЃРїРѕР»РЅСЏРµРј РІ РѕС‚РґРµР»СЊРЅРѕРј РїРѕС‚РѕРєРµ СЃ Р±РѕР»СЊС€РёРј (64MB) СЃС‚РµРєРѕРј.
         // Р РµРєСѓСЂСЃРёРІРЅС‹Р№ РІС‹Р·РѕРІ С„СѓРЅРєС†РёР№ Р·Р°РЅРёРјР°РµС‚ ~100KB СЃС‚РµРєР° РЅР° СѓСЂРѕРІРµРЅСЊ вЂ” РЅР° РґРµС„РѕР»С‚РЅС‹С…
         // 1MB СЃС‚РµРєР° РїСЂРѕС†РµСЃСЃР° РїСЂРѕС†РµСЃСЃ РїР°РґР°Р» (0xC00000FD) РЅР° РіР»СѓР±РёРЅРµ ~10, СЂР°РЅСЊС€Рµ С‡РµРј
         // СЃСЂР°Р±Р°С‚С‹РІР°Р» guard CALL_DEPTH_LIMIT. Р‘РѕР»СЊС€РѕР№ СЃС‚РµРє СѓР±РёСЂР°РµС‚ Р·Р°РІРёСЃРёРјРѕСЃС‚СЊ РѕС‚
@@ -6115,11 +6236,7 @@ void operator()() {
         auto threadProc = [](LPVOID param) -> DWORD {
             auto* self = static_cast<ASTDeepAnalyzer*>(param);
             self->prof_enabled = std::getenv("LUMEN_PROF") != nullptr;
-            self->initContext();
-            for (auto& node : self->ast) {
-                if (self->aborted) break;
-                self->execute(node, self->global_context);
-            }
+            self->runAnalysis();
             if (self->prof_enabled) {
                 std::fprintf(stderr, "[prof] execute calls = %lld, dry-context copies = %lld, pure fast-path = %lld\n",
                              self->prof_exec_count, self->prof_copy_count, self->prof_pure_count);
@@ -6141,19 +6258,48 @@ void operator()() {
             WaitForSingleObject(h, INFINITE);
             CloseHandle(h);
         } else {
-            initContext();
-            for (auto& node : ast) {
-                if (aborted) break;
-                execute(node, global_context);
-            }
+            runAnalysis();
         }
 #else
+        runAnalysis();
+#endif
+    }
+
+    // M8: единая точка входа анализа (вызывается из operator() в отдельном
+    // потоке с большим стеком). Обычный режим — исполнить весь файл; eval_only —
+    // зарегистрировать объявления и исполнить только собранные eval-блоки.
+    void runAnalysis() {
         initContext();
+        if (eval_only) { runEvalOnly(); return; }
         for (auto& node : ast) {
             if (aborted) break;
             execute(node, global_context);
         }
-#endif
+    }
+
+    void runEvalOnly() {
+        // 1) Регистрируем объявления (функции/структуры/enum/namespace), чтобы
+        //    тела eval могли вызывать пользовательские сущности. Прочий код
+        //    (в т.ч. циклы вне eval) не исполняем — это и есть «только eval-блоки».
+        for (auto* node : ast) {
+            if (aborted) break;
+            Node* u = node;
+            while (u && u->type == NodeTypes::NodeModifier)
+                u = static_cast<struct NodeModifier*>(u)->node;
+            if (!u) continue;
+            if (u->type == NodeTypes::NodeFunctionDeclaration ||
+                u->type == NodeTypes::NodeStructDeclaration ||
+                u->type == NodeTypes::NodeEnumDeclaration ||
+                u->type == NodeTypes::NodeNamespace) {
+                execute(u, global_context);
+            }
+        }
+        // 2) Исполняем eval-блоки по очереди в общем глобальном контексте
+        //    (let из блока №1 виден блоку №2 и последующему коду).
+        for (auto* blk : eval_blocks) {
+            if (aborted) break;
+            execute(blk, global_context);
+        }
     }
 
 };

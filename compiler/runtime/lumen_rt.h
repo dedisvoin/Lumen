@@ -9,6 +9,7 @@
 #include <functional>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 
 namespace rt {
 
@@ -457,6 +458,12 @@ static inline Box* box_addr(Box v) {
     return c;
 }
 
+// Адрес указателя -> «0x» + hex (нижний регистр): ptr(0x1000,i64) печатает 0x1000.
+static inline std::string hex_addr(long long a) {
+    char buf[2 + 16 + 1];
+    std::snprintf(buf, sizeof(buf), "0x%llx", static_cast<unsigned long long>(a));
+    return std::string(buf);
+}
 static inline std::string fmt(const Box& v) {
     switch (v.t) {
         case Box::T_STR:  return v.s;
@@ -479,7 +486,7 @@ static inline std::string fmt(const Box& v) {
             return "{}";
         }
         case Box::T_PTR:
-            if (v.addr >= 0) return "0x" + std::to_string(v.addr);
+            if (v.addr >= 0) return hex_addr(v.addr);
             return v.heap ? "ptr" : "null-ptr";
         case Box::T_REF: return v.sp ? fmt(*v.sp) : "ref-null";
         case Box::T_REFI: { Box* c = refi_cell(v); return c ? fmt(*c) : "ref-null"; }
@@ -667,7 +674,10 @@ static inline bool type_name_eq(const std::string& a, const std::string& b) {
 static inline Box cmp(char op, Box l, Box r) {
     if (op == 'e' || op == 'n') {
         bool eq = false;
-        if (l.t == r.t) {
+        if (is_num(l) && is_num(r)) {
+            // числовое равенство с приведением: 1 == 1.0 -> true (согласовано с порядком <)
+            eq = (num(l) == num(r));
+        } else if (l.t == r.t) {
             switch (l.t) {
                 case Box::T_NULL: eq = true; break;
                 case Box::T_BOOL: eq = (l.b == r.b); break;
@@ -688,15 +698,11 @@ case Box::T_PTR:
         }
         return Box::boo(op == 'e' ? eq : !eq);
     }
-    // порядковые (числа; строки — по длине, как в интерпретаторе)
+    // порядковые — только числа. Строки порядково НЕ сравниваются (только == / !=),
+    // как и в интерпретаторе: `"a" < "b"` — ошибка BINARY_COMPARE_INVALID_TYPE.
     bool res = false;
     if (is_num(l) && is_num(r)) {
         double a = num(l), b = num(r);
-        if (op == '<' || op == 'L') res = a < b;
-        else if (op == '>' || op == 'G') res = a > b;
-        if ((op == 'L' || op == 'G') && a == b) res = true;
-    } else if (l.t == Box::T_STR && r.t == Box::T_STR) {
-        size_t a = l.s.size(), b = r.s.size();
         if (op == '<' || op == 'L') res = a < b;
         else if (op == '>' || op == 'G') res = a > b;
         if ((op == 'L' || op == 'G') && a == b) res = true;
@@ -704,18 +710,30 @@ case Box::T_PTR:
     return Box::boo(res);
 }
 
-// Логические && || — только bool (как в интерпретаторе; оба операнда вычислены заранее).
-static inline Box land(Box l, Box r) {
-    return Box::boo((l.t == Box::T_BOOL ? l.b : false) && (r.t == Box::T_BOOL ? r.b : false));
+// Логические && || — только bool (как в интерпретаторе). Правый операнд —
+// ленивый (thunk), он вычисляется ТОЛЬКО если левый не решает исход
+// (короткое замыкание).
+template <class RF>
+static inline Box land(Box l, RF&& rf) {
+    bool lb = (l.t == Box::T_BOOL) ? l.b : false;
+    if (!lb) return Box::boo(false);
+    Box r = rf();
+    return Box::boo(r.t == Box::T_BOOL ? r.b : false);
 }
-static inline Box lor(Box l, Box r) {
-    return Box::boo((l.t == Box::T_BOOL ? l.b : false) || (r.t == Box::T_BOOL ? r.b : false));
+template <class RF>
+static inline Box lor(Box l, RF&& rf) {
+    bool lb = (l.t == Box::T_BOOL) ? l.b : false;
+    if (lb) return Box::boo(true);
+    Box r = rf();
+    return Box::boo(r.t == Box::T_BOOL ? r.b : false);
 }
-// ?? — null-coalescing: l ?? r возвращает r, только если l == null. Как и у && / ||,
-// правый операнд вычисляется заранее; ссылки разыменовываются перед проверкой.
-static inline Box coalesce(Box l, Box r) {
+// ?? — null-coalescing: l ?? r возвращает r, только если l == null.
+// Правый операнд ленивый: вычисляется только когда l == null.
+// Ссылки разыменовываются перед проверкой.
+template <class RF>
+static inline Box coalesce(Box l, RF&& rf) {
     l = derefval(l);
-    if (l.t == Box::T_NULL) return derefval(r);
+    if (l.t == Box::T_NULL) return derefval(rf());
     return l;
 }
 static inline Box not_(Box v) {

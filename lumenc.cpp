@@ -10,9 +10,12 @@
 #include "compiler/ASTGenerator.cpp"
 #include "compiler/SemanticAnalizer.cpp"
 #include "compiler/DeepAnalizer.cpp"
+#include "compiler/TypeAnalyzer.cpp"
 #include "compiler/CodeGenerator.cpp"
 
 #include <filesystem>
+#include <limits>
+#include <cmath>
 
 
 // --- РџРѕР»РЅС‹Р№ РєРѕРЅРІРµР№РµСЂ: СЃРєРѕРјРїРёР»РёСЂРѕРІР°С‚СЊ СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅС‹Р№ .cpp РІ .exe С‡РµСЂРµР· g++ ---
@@ -25,7 +28,8 @@ String stripExtension(const String& name) {
     return String(s);
 }
 
-void buildExe(const CompilerArgs& args, const String& cpp_file,
+// Собрать exe. Возвращает путь к бинарнику (пустая строка при ошибке).
+String buildExe(const CompilerArgs& args, const String& cpp_file,
               ErrorContainer& error_container, const bool dbg) {
     String exe_name = args.OUT_FILE_NAME.empty()
                         ? String("out.exe")
@@ -44,11 +48,75 @@ void buildExe(const CompilerArgs& args, const String& cpp_file,
         std::cout << Style("Finished ", TerminalStyle::BRIGHT_GREEN)
                   << Style("`dev` profile [unoptimized + debuginfo] target(s) in ", TerminalStyle::DIM_WHITE)
                   << rustTime(t_b) << std::endl;
+        return exe_name;
     } else {
         std::cout << Style("error: ", TerminalStyle::BRIGHT_RED)
                   << Style("could not compile `" + exe_name + "` due to previous error",
                            TerminalStyle::DIM_WHITE) << std::endl;
+        return String();
     }
+}
+
+// -bench: множитель ускорения в формате "6.20x" (invariant: точка).
+String rustSpeed(double x) noexcept {
+    if (!(x > 0.0) || !std::isfinite(x)) return String("--");
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "%.2f", x);
+    return String(buffer);
+}
+
+// -bench: прогнать нативный бинарник (лучшее из runs) и напечатать сравнение
+// времени интерпретатора и нативной сборки в стиле cargo/debug.
+int runBenchmark(const CompilerArgs& args, const String& exe, double interp_ms,
+                 bool interp_truncated) {
+    if (exe.empty()) return 1;
+#ifdef _WIN32
+    const String redirect(" > NUL 2>&1");
+#else
+    const String redirect(" > /dev/null 2>&1");
+#endif
+    const int runs = (args.BENCH_RUNS < 1) ? 1 : args.BENCH_RUNS;
+    String run_cmd = String("\"") + exe + String("\"") + redirect;
+
+    double native_ms = (std::numeric_limits<double>::max)();
+    bool native_ok = false;
+    for (int i = 0; i < runs; ++i) {
+        auto tb = std::chrono::steady_clock::now();
+        int rc = std::system(run_cmd.to_utf8().c_str());
+        double ms = elapsedMs(tb);
+        if (rc == 0 && ms < native_ms) { native_ms = ms; native_ok = true; }
+    }
+
+    String opt = args.OPT_LEVEL.empty() ? String("default") : args.OPT_LEVEL;
+    std::cout << Style(" Benchmark ", TerminalStyle::BRIGHT_GREEN)
+              << Style(args.FILE_PATH, TerminalStyle::BRIGHT_CYAN)
+              << Style(" (native ", TerminalStyle::DIM_WHITE)
+              << Style(opt, TerminalStyle::BRIGHT_GREEN)
+              << Style(", best of ", TerminalStyle::DIM_WHITE)
+              << Style(String(std::to_string(runs)), TerminalStyle::BRIGHT_GREEN)
+              << Style(")", TerminalStyle::DIM_WHITE) << std::endl;
+
+    std::cout << Style("         interpreter  ", TerminalStyle::DIM_WHITE)
+              << rustTime(interp_ms);
+    if (interp_truncated)
+        std::cout << Style("  (interpreter budget limit reached)", TerminalStyle::DIM);
+    std::cout << std::endl;
+
+    std::cout << Style("         native       ", TerminalStyle::DIM_WHITE);
+    if (native_ok) std::cout << rustTime(native_ms);
+    else           std::cout << Style("failed", TerminalStyle::BRIGHT_RED);
+    std::cout << std::endl;
+
+    if (native_ok && native_ms > 0.0) {
+        std::cout << Style("         speedup      ", TerminalStyle::DIM_WHITE);
+        if (interp_truncated)
+            std::cout << Style("--", TerminalStyle::DIM)
+                      << Style("  (interpreter truncated by budget)", TerminalStyle::DIM);
+        else
+            std::cout << Style(rustSpeed(interp_ms / native_ms) + String("x"), TerminalStyle::BRIGHT_GREEN);
+        std::cout << std::endl;
+    }
+    return native_ok ? 0 : 1;
 }
 
 
@@ -61,6 +129,13 @@ int main(int argc, char** argv) {
 
     if (compiler_args.SHOW_HELP) { printHelp(); return 0; }
     if (compiler_args.FILE_PATH.empty()) return 0;
+
+    // -bench: замер времени выполнения. Требует сборки exe; если уровень
+    // оптимизации не задан явно — берём -O2 (как в регрессионном бенчмарке).
+    if (compiler_args.BENCHMARK) {
+        compiler_args.BUILD_EXE = true;
+        if (compiler_args.OPT_LEVEL.empty()) compiler_args.OPT_LEVEL = "-O2";
+    }
 
     const bool dbg = compiler_args.DEBUG_MODE;
     ErrorContainer error_container;
@@ -119,11 +194,27 @@ int main(int argc, char** argv) {
     err_before = error_container.errors.size();
     t0 = std::chrono::steady_clock::now();
     auto deep_analizer = ASTDeepAnalyzer(nodes, error_container);
+    auto type_analyzer = TypeAnalyzer(nodes, error_container);
     deep_analizer.print_input_prompts = compiler_args.RUN_INTERPRET;
-    deep_analizer.interpret_mode = compiler_args.RUN_INTERPRET;
-    const bool run_deep = !compiler_args.NO_DEEP_ANALYZE || compiler_args.RUN_INTERPRET;
-    if (run_deep) deep_analizer();
-    double t_deep = run_deep ? elapsedMs(t0) : 0.0;
+    deep_analizer.interpret_mode = compiler_args.RUN_INTERPRET || compiler_args.BENCHMARK;
+    const bool run_interp = compiler_args.RUN_INTERPRET || compiler_args.BENCHMARK;
+    // M9: TypeAnalyzer — движок по умолчанию. Откат к полному интерпретатору:
+    // -r/-bench (нужен именно интерпретатор), -deep/--strict, а также -noanalize
+    // (пропустить анализ вовсе). Флаг -types остаётся для явного выбора статики.
+    const bool want_interp = run_interp || compiler_args.STRICT_DEEP;
+    const bool use_types = !compiler_args.NO_DEEP_ANALYZE && !want_interp;
+    const bool run_deep  = !compiler_args.NO_DEEP_ANALYZE && want_interp;
+    if (use_types)      type_analyzer();
+    else if (run_deep)  deep_analizer();
+    // Для ТРАНСПИЛЯТОРА `eval { ... }` — прозрачная обёртка: тело эмитится как
+    // обычный рантайм-код (CodeGenerator, case NodeEvalBlock), а compile-time
+    // исполнение eval здесь НЕ запускается. Так транспиляция не зависит от
+    // содержимого блока (изоляция/бюджет/заморозка — прерогатива LSP-хинтов,
+    // где eval исполняет lumen-lsp.cpp). `-r`/`-bench`/`-deep` и так гоняют
+    // полный интерпретатор.
+    const bool ran_eval = false;
+    (void)ran_eval;
+    double t_deep = (use_types || run_deep || ran_eval) ? elapsedMs(t0) : 0.0;
     size_t deep_errors = error_container.errors.size() - err_before;
     size_t deep_hard = 0;
     for (size_t i = err_before; i < error_container.errors.size(); i++) if (!error_container.errors[i].is_warning) deep_hard++;
@@ -140,8 +231,9 @@ int main(int argc, char** argv) {
     error_container.viewError();
 
 
-    // -r: РІС‹РІРѕРґ СЂРµР·СѓР»СЊС‚Р°С‚Р° РёРЅС‚РµСЂРїСЂРµС‚Р°С‚РѕСЂР°. Р¤РёР»СЊС‚СЂ: С‚РѕР»СЊРєРѕ echo-РїРѕРґСЃРєР°Р·РєРё (РјРµС‚РєРё " > " вЂ” С‚РёРїС‹).
-    if (compiler_args.RUN_INTERPRET) {
+    // -r: вывод результата интерпретатора. Фильтр: только echo-подсказки (метки " > " — типы).
+    // При -bench ранний возврат не делаем: нужно ещё собрать и прогнать нативный бинарник.
+    if (compiler_args.RUN_INTERPRET && !compiler_args.BENCHMARK) {
         for (auto& h : deep_analizer.inlay_hints)
             if (h.label.size() < 2 || h.label[0] != U' ' || h.label[1] != U'>') {
                 String v = h.label;
@@ -154,15 +246,19 @@ int main(int argc, char** argv) {
 
     if (compiler_args.PRINT_AST_TREE) printNodes(ast_generator.nodes);
 
+    String built_exe;
     if (compiler_args.EMIT_CPP || compiler_args.BUILD_EXE) {
         size_t hard_errors = 0;
         for (auto& e : error_container.errors)
             if (!e.is_warning) hard_errors++;
         if (hard_errors == 0) {
-            // Решения резолва перегрузок от deep-анализатора (nullptr при -noanalize:
-            // тогда кодоген работает на своём строковом fallback).
+            // Решения резолва перегрузок от выбранного движка (nullptr, если
+            // анализ не запускался: тогда кодоген работает на своём fallback).
+            const std::map<Node*, Node*>* resolved =
+                use_types ? &type_analyzer.resolved_calls
+                          : (run_deep ? &deep_analizer.resolved_calls : nullptr);
             auto generator = CodeGenUnit(ast_generator.nodes, dbg, preproccesor.cpp_includes,
-                                        run_deep ? &deep_analizer.resolved_calls : nullptr);
+                                        resolved);
             String cpp_path = compiler_args.OUT_FILE_NAME.empty()
                                 ? String("out.cpp")
                                 : stripExtension(compiler_args.OUT_FILE_NAME) + String(".cpp");
@@ -181,8 +277,14 @@ int main(int argc, char** argv) {
                 std::cout << Style("         Generated ", TerminalStyle::DIM_WHITE)
                           << Style(String(std::to_string(gen_lines)) + " lines", TerminalStyle::BRIGHT_GREEN) << std::endl;
             }
-            if (compiler_args.BUILD_EXE) buildExe(compiler_args, cpp_path, error_container, dbg);
+            if (compiler_args.BUILD_EXE) built_exe = buildExe(compiler_args, cpp_path, error_container, dbg);
         }
+    }
+
+    // -bench: сравнить время выполнения интерпретатора и нативного бинарника.
+    if (compiler_args.BENCHMARK) {
+        bool interp_truncated = deep_analizer.any_budget_hit;
+        return runBenchmark(compiler_args, built_exe, t_deep, interp_truncated);
     }
 
 }

@@ -106,6 +106,7 @@
   "function_name": {
     "color": "#9ccfd8"
   },
+  "macro_function": {"color": "#d89361", "bold": true},
     "variable": {
       "color": "#c4a7e7"
     },

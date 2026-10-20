@@ -31,7 +31,12 @@
   },
   {
     "name": "Run Lumen",
-    "commands": "lumenc -f @AT_FILE",
+    "commands": "lumenc -f @AT_FILE -noanalize -d",
+    "type": "Other"
+  },
+  {
+    "name": "Run bench",
+    "commands": "lumenc -f @AT_FILE -d -build -bench\nout",
     "type": "Other"
   }
 ]

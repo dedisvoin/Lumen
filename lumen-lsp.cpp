@@ -21,6 +21,7 @@
 #include "compiler/ASTGenerator.cpp"
 #include "compiler/SemanticAnalizer.cpp"
 #include "compiler/DeepAnalizer.cpp"
+#include "compiler/TypeAnalyzer.cpp"
 #include "compiler/utils/File.cpp"
 
 
@@ -188,10 +189,30 @@ static void analyzeAndPublish(const string& uri, const string& text) {
 
     auto sa = ASTAnalizer(tree, ec);
     sa();
-auto da = ASTDeepAnalyzer(tree, ec);
-    if (!g_noDeepAnalysis) da();
-    g_inlayHints[uri] = da.inlay_hints;
-    g_localTypes[uri] = std::move(da.local_types); // P8: full types of locals for chains
+    auto ta = TypeAnalyzer(tree, ec);
+    auto da = ASTDeepAnalyzer(tree, ec);
+    da.symbols_only = true;
+    if (!g_noDeepAnalysis) { da(); ta(); }
+    // M8: значения, вычисленные интерпретатором внутри top-level eval-блоков
+    // (echo -> value-хинты), добавляем к выводу TypeAnalyzer. Берём только
+    // хинты-значения (не типы " > ") и только в диапазоне строк eval-блока.
+    if (!ta.eval_blocks.empty()) {
+        for (auto& h : da.inlay_hints) {
+            if (h.label.size() >= 2 && h.label[0] == U' ' && h.label[1] == U'>')
+                continue; // тип, не значение
+            for (Node* b : ta.eval_blocks) {
+                auto* ev = static_cast<struct NodeEvalBlock*>(b);
+                int lo = ev->eval_token.position.line;
+                int hi = ev->end_token.position.line;
+                if (h.line >= lo && h.line <= hi) {
+                    ta.inlay_hints.push_back(h);
+                    break;
+                }
+            }
+        }
+    }
+    g_inlayHints[uri] = ta.inlay_hints;
+    g_localTypes[uri] = std::move(ta.local_types); // P8: full types of locals for chains
     g_tokens[uri] = tokens;
     g_contexts[uri] = da.global_context;
     g_structs[uri] = std::move(da.structs); // СѓРєР°Р·Р°С‚РµР»Рё Node* Р¶РёРІСѓС‚, РїРѕРєР° Р¶РёРІ g_trees
@@ -275,6 +296,7 @@ static void sendInitializeResult(const JsonValue& id) {
             "modifier",   // 11
             "typeParameter", // 12
             "selfParameter", // 13
+            "macroFunction", // 14
         };
         for (const char* name : tokenTypeNames)
             tokenTypesArr.array.push_back(JString(name));
@@ -890,9 +912,20 @@ static JsonValue buildCompletion(const string& text, const string& path, int lsp
         std::map<std::string, LocalCandidate> locals;
         collectParamsInRange(tokens, lineStarts, pos, locals);
         collectLetVars(tokens, lineStarts, pos, locals);
-        for (const auto& kv : locals)
-            if (matchPrefix(kv.first))
-                addItem(kv.first, kv.second.kind, kv.second.detail);
+        for (const auto& kv : locals) {
+            if (!matchPrefix(kv.first)) continue;
+            // P8: полный реифицированный тип локальной из DeepAnalyzer важнее
+            // текстовой эвристики по токенам: она даёт «static_array» без
+            // дженериков для `let x = static_array[...]` и пустую подпись для
+            // вызова-конструктора `let x = static_array(...)`. Анализатор знает
+            // тип точно (`static_array[char, 5]`).
+            std::string det = kv.second.detail;
+            auto ltt = da.local_types.find(kv.second.declKey);
+            if (ltt != da.local_types.end()
+                    && !ltt->second.isAny() && !ltt->second.isAuto())
+                det = ltt->second.toString().to_utf8();
+            addItem(kv.first, kv.second.kind, det);
+        }
         addContextObjects(da.global_context, &locals);
     }
 
@@ -962,7 +995,7 @@ static JsonValue buildCompletion(const string& text, const string& path, int lsp
                 if (!args.empty()) args += ", ";
                 args += a.token.value.to_utf8();
             }
-            addItem(name, KIND_MACRO, "#macro  " + name + "(" + args + ")");
+            addItem(name, KIND_MACRO, "#macro " + name + "(" + args + ")");
         }
     }
 
@@ -979,6 +1012,7 @@ static JsonValue buildCompletion(const string& text, const string& path, int lsp
             {"shadow",KIND_MODIFIER},{"strict",KIND_MODIFIER},{"ref",KIND_MODIFIER},
             {"new",14},{"del",14},{"typeof",14},{"sizeof",14},{"ptr",14},{"out",14},{"outln",14},
             {"input",14},{"exit",14},{"append",14},{"reserve",14},{"typeis",14},
+            {"mod",14},{"eval",14},
             {"str",7},{"char",7},{"bool",7},{"Type",7},{"Namespace",7},{"Func",7},
             {"Lambda",7},{"auto",7},{"Null",7},{"any",7},
             {"i8",7},{"i16",7},{"i32",7},{"i64",7},{"f16",7},{"f32",7},{"f64",7},
@@ -2239,7 +2273,7 @@ else {
                     args += a.token.value.to_utf8();
                 }
                 contents.object["value"] = JString(
-                    "**#macro  " + word + "(" + args + ")**");
+                    "**#macro " + word + "(" + args + ")**");
                 contents.object["kind"] = JString("markdown");
                 found = true;
                 break;
@@ -3183,7 +3217,8 @@ static std::vector<size_t> buildLineStarts(const std::string& text) {
 static JsonValue buildSemanticTokens(const std::vector<Token>& tokens,
                                      const Context& ctx,
                                      const std::vector<Node*>& tree,
-                                     const std::vector<size_t>& lineStarts) {
+                                     const std::vector<size_t>& lineStarts,
+                                     const std::vector<Macro>& macros) {
     JsonValue data = JArray();
 
     // 0. Р С›Р В±Р В»Р В°РЎРѓРЎвЂљР С‘ Р Р†Р С‘Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С–Р ВµР Р…Р ВµРЎР‚Р С‘Р С”-Р С—Р В°РЎР‚Р В°Р СР ВµРЎвЂљРЎР‚Р С•Р Р†
@@ -3200,6 +3235,21 @@ static JsonValue buildSemanticTokens(const std::vector<Token>& tokens,
         else if (co.value.T == Ty::Namespace)  nameType[name] = 9;
         else if (co.value.T == Ty::Type_)      nameType[name] = 5;
         else                                   nameType[name] = 7;
+    }
+
+    // 1b. Имена #macro-функций: отдельный семантический тип (macroFunction),
+    // чтобы имя макроса не красилось как обычная функция/переменная. Держим
+    // и offset определения, и множество имён (для подсветки вызовов).
+    std::set<std::string> macroNames;
+    std::set<size_t> macroDefOffsets;
+    for (const auto& m : macros) {
+        const std::string mname = m.name_token.value.to_utf8();
+        if (mname.empty()) continue;
+        macroNames.insert(mname);
+        size_t moff = ((size_t)m.name_token.position.line < lineStarts.size())
+            ? lineStarts[m.name_token.position.line] + m.name_token.position.index
+            : (size_t)m.name_token.position.index;
+        macroDefOffsets.insert(moff);
     }
 
     // 2. Р РЋР С•Р В±Р С‘РЎР‚Р В°Р ВµР С Р С•Р В±Р В»Р В°РЎРѓРЎвЂљР С‘ Р Р†Р С‘Р Т‘Р С‘Р СР С•РЎРѓРЎвЂљР С‘ Р С—Р В°РЎР‚Р В°Р СР ВµРЎвЂљРЎР‚Р С•Р Р† Р С‘Р В· AST
@@ -3239,6 +3289,8 @@ static JsonValue buildSemanticTokens(const std::vector<Token>& tokens,
                 semType = 12;  // typeParameter
             else if (isParamNameAt(name, off, paramScopes))
                 semType = 8;  // parameter
+            else if (macroDefOffsets.count(off) || macroNames.count(name))
+                semType = 14;  // macroFunction (#macro)
             else if (fnNames.count(name))
                 semType = 6;  // function
             else if (nsNames.count(name))
@@ -3845,8 +3897,11 @@ int main() {
             if (tokIt != g_tokens.end() && ctxIt != g_contexts.end() && treeIt != g_trees.end()) {
                 std::vector<size_t> lineStarts = buildLineStarts(
                     docIt != g_docs.end() ? docIt->second : "");
-                data = buildSemanticTokens(tokIt->second, ctxIt->second,
-                                           treeIt->second, lineStarts);
+            std::vector<Macro> macBuf;
+            auto macIt = g_macros.find(uri);
+            if (macIt != g_macros.end()) macBuf = macIt->second;
+            data = buildSemanticTokens(tokIt->second, ctxIt->second,
+                                       treeIt->second, lineStarts, macBuf);
             }
 
             result.object["data"] = data;

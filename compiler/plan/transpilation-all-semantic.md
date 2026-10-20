@@ -8,7 +8,7 @@
 > Документ — уточнённая под **текущий синтаксис и полный набор конструкций** версия
 > `compiler/plan/transpilation-cpp.md` (база: boxed-модель, эмиссия как отражение
 > `execute()` из `DeepAnalizer`). Здесь добавлено всё, чего не было в старом плане:
-> `ref`, nullable `!T` / union `A | B`, tuple `!{…}`, указатели/`new`/`ptr`, операторные
+> `ref`, nullable `?T` / union `A | B`, tuple `!{…}`, указатели/`new`/`ptr`, операторные
 > дюндеры, актуальный синтаксис struct-полей (`strict let x: T;`), enum, дженерики.
 
 ---
@@ -29,7 +29,7 @@
 | структуры | поля, `self`, static/const fn, дженерики, литерал, `new S {}` |
 | enum | `Color::Red` → 0 … |
 | перегрузка операторов | `__add__`, `__eq__`, `__sizeof__` |
-| типы | `typeof`, `sizeof`, `as`, Type-алиасы, `!T`, `A \| B` |
+| типы | `typeof`, `sizeof`, `as`, Type-алиасы, `?T`, `A \| B` |
 | препроцессор | сущности `#…` до AST не доходят (см. §4.14) |
 | видимость | `private` в namespace, `final` |
 
@@ -79,7 +79,7 @@ all_semantic.lm
 | `Tuple[...]` | `Value` → `RuntimeArray` фикс. длины | литерал `!{a,b}` = унарный `!` от массива (см. §4.6) |
 | `Func`/`Lambda` | `Value` callable | лямбда-значение — открытый вопрос №1 |
 | `Type` | `Value` (Ty::Type_, reified `Type`) | `strict let X: Type = i8 \| i16` |
-| `!T` (nullable) | `Value` (union-тип включает `Null`) | runtime-локаль в `Type`, поведение уже в рантайме |
+| `?T` (nullable) | `Value` (union-тип включает `Null`) | runtime-локаль в `Type`, поведение уже в рантайме |
 | `A \| B` (union) | `Value` (union-тип `A\|B`) | конструкции те же |
 | `*T` (указатель) | `Value` (Pointer/`VirtualHeap`) | см. §4.7 |
 | struct | `Value` → `RuntimeStruct` + реестр типов | generics — метаданные для `typeof` |
@@ -313,10 +313,10 @@ struct с этим методом; иначе — обычная запись. �
 - `x as T` (`NodeCast`) → дюндер `__as__` (аргумент — `new_type(T)`), иначе перестройка
   тега/типа по `Value`; ошибки несовместимости — как в `DeepAnalizer`.
 
-### 4.13 `!T`, `A | B`, Type-значения
+### 4.13 `?T`, `A | B`, Type-значения
 
 В boxed-модели — это **типы `Value`**, отдельной эмиссии не требуется:
-`let maybe_num: !i64 = null;` → `ctx.define("maybe_num", null_value, Type(i64|null))`,
+`let maybe_num: ?i64 = null;` → `ctx.define("maybe_num", null_value, Type(i64|null))`,
 присваивание `42` проходит через рантайм-проверку соответствия union-типу (строгому).
 `final strict let Whole: Type = i8 | i16 | i32 | i64;` → `define` с типом
 `Ty::Type_` и значением `new_type(union)`. `typeof` такой переменной → `Type`.
@@ -525,7 +525,7 @@ out.exe                                     # сверяем с коммента
   и работает. Приёмка: «структуры», «enum», «namespace».
 - **M5 — ref и дюндеры. ✓ СДЕЛАНО.** `RPath`, ref-алиас/параметр/возврат,
   операторные дюндеры (`__add__`/`__eq__`/`__sizeof__` dispatch), `typeof/sizeof/as`,
-  `!T`/union (`§4.8, §4.11-4.13`). Реализация: Box получил тег `T_REF` + `shared_ptr<Box> sp`
+  `?T`/union (`§4.8, §4.11-4.13`). Реализация: Box получил тег `T_REF` + `shared_ptr<Box> sp`
   (алиас на ячейку env-хранилища); `rt::rref/refcell_ptr/derefval/setref`; препроцесс
   `collectFrom` собирает `structDunders` (методы `__dunder__`), генератор main эмитит
   `rt::reg_dunder`; `rt::op_dispatch` (арифметика → `bin`, сравнение → `cmp`, direct) и

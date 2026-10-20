@@ -32,6 +32,7 @@
 #include "core/Nodes/NodeExit.cpp"
 #include "core/Nodes/NodeAppend.cpp"
 #include "core/Nodes/NodeReserve.cpp"
+#include "core/Nodes/NodeEvalBlock.cpp"
 #include "core/Nodes/NodeLambda.cpp"
 
 
@@ -651,13 +652,16 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                                     static_cast<struct NodeBinaryGreaterEqual*>(node)->r_node);
             case NodeTypes::NodeBinaryLogicalAnd:
                 return "rt::land(" + emitExpr(static_cast<struct NodeBinaryLogicalAnd*>(node)->l_node)
-                     + ", " + emitExpr(static_cast<struct NodeBinaryLogicalAnd*>(node)->r_node) + ")";
+                     + ", [&]() -> rt::Box { return "
+                     + emitExpr(static_cast<struct NodeBinaryLogicalAnd*>(node)->r_node) + "; })";
             case NodeTypes::NodeBinaryLogicalOr:
                 return "rt::lor(" + emitExpr(static_cast<struct NodeBinaryLogicalOr*>(node)->l_node)
-                     + ", " + emitExpr(static_cast<struct NodeBinaryLogicalOr*>(node)->r_node) + ")";
+                     + ", [&]() -> rt::Box { return "
+                     + emitExpr(static_cast<struct NodeBinaryLogicalOr*>(node)->r_node) + "; })";
             case NodeTypes::NodeBinaryNullCoalesce:
                 return "rt::coalesce(" + emitExpr(static_cast<struct NodeBinaryNullCoalesce*>(node)->l_node)
-                     + ", " + emitExpr(static_cast<struct NodeBinaryNullCoalesce*>(node)->r_node) + ")";
+                     + ", [&]() -> rt::Box { return "
+                     + emitExpr(static_cast<struct NodeBinaryNullCoalesce*>(node)->r_node) + "; })";
             case NodeTypes::NodeUnaryNegation: {
                 auto* un = static_cast<struct NodeUnaryNegation*>(node);
                 if (un->token.value == "?") {
@@ -885,6 +889,20 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 String rname;
                 if (r && r->type == NodeTypes::NodeVariable)
                     rname = static_cast<struct NodeVariable*>(r)->name;
+                // typeof(<массив>)::type / ::size — статические члены типа-массива.
+                // ::type — элемент (анализатор сохранил строку), ::size — реальная
+                // длина массива в рантайме (как sizeof).
+                Node* l = n->l_node;
+                while (l && l->type == NodeTypes::NodeScope)
+                    l = static_cast<struct NodeScope*>(l)->node;
+                if (l && l->type == NodeTypes::NodeTypeOf) {
+                    auto* tn = static_cast<struct NodeTypeOf*>(l);
+                    if (rname == "size")
+                        return "rt::szof_dispatch(" + envVar() + ", "
+                             + emitExpr(tn->expr) + ")";
+                    if (rname == "type" && tn->has_static_elem)
+                        return "rt::Box::typ(" + quote(tn->static_type_elem) + ")";
+                }
                 String key = lname + "::" + rname;
                 auto ei = enumMap.find(lname);
                 if (ei != enumMap.end()) {
@@ -1303,6 +1321,12 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                     if (!cs.empty()) { s += cs; s += "\n"; }
                 }
                 return s;
+            }
+            case NodeTypes::NodeEvalBlock: {
+                // M7: тело eval эмитится как прозрачный блок. Заморозка значений
+                // на этапе анализа — задача драйвера eval (M8).
+                auto* ev = static_cast<struct NodeEvalBlock*>(node);
+                return ev->body ? emitStmt(ev->body) : String("");
             }
             case NodeTypes::NodeVariableDeclaration: {
                 auto* n = static_cast<struct NodeVariableDeclaration*>(node);

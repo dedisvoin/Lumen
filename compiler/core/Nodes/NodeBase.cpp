@@ -79,7 +79,8 @@ enum NodeTypes {
     NodeAssert,
     NodeExit,
     NodeAppend,
-    NodeReserve
+    NodeReserve,
+    NodeEvalBlock
 };
 
 enum NodeOperation {

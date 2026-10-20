@@ -45,7 +45,8 @@ namespace Literals {
         "mod",
         "sizeof",
         "ptr",
-        "extern"
+        "extern",
+        "eval"
     } ;
 
     const static std:: vector<String> MODIFIERS = {

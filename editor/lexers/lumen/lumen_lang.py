@@ -52,6 +52,11 @@ def _extract_define_macros(line: str) -> Set[str]:
     return set()
 
 
+def _extract_macro_functions(line: str) -> Set[str]:
+    """Имена #macro-функций, объявленных на строке."""
+    return set(re.findall(r'^\s*#macro\s+([a-zA-Z_][a-zA-Z0-9_]*)', line))
+
+
 def _extract_structs(line: str) -> Set[str]:
     """Имена struct, объявленных на строке."""
     return set(re.findall(r'\bstruct\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\:|\{)', line))
@@ -83,6 +88,7 @@ class LumenLangLexer(QsciLexerCustom):
     STYLE_COMMENT_DOC = 16       # //! комментарии
     STYLE_COMMENT_QUESTION = 17  # //? комментарии
     STYLE_DUNDER_METHOD = 18     # __method__
+    STYLE_MACRO_FUNCTION = 19    # имя #macro-функции
 
     LINE_COMMENT = "//"  # комментарий строки (Ctrl+/)
 
@@ -108,6 +114,7 @@ class LumenLangLexer(QsciLexerCustom):
         STYLE_COMMENT_DOC: ("comment_doc", QColor(255, 80, 80)),
         STYLE_COMMENT_QUESTION: ("comment_question", QColor(255, 200, 80)),
         STYLE_DUNDER_METHOD: ("dunder_method", QColor(203, 166, 247)),
+        STYLE_MACRO_FUNCTION: ("macro_function", QColor(255, 121, 198)),
     }
 
     def __init__(self, parent=None, theme_data: Optional[dict] = None):
@@ -119,7 +126,7 @@ class LumenLangLexer(QsciLexerCustom):
             'ret', 'assert', 'lambda', 'do', "is", "as", "ptr",
             'struct', 'enum', 'namespace', 'fn', 'continue', 'break', '__LINE__', '__FILE__', '__LUMEN__',
             'new', 'del', 'typeof', 'sizeof', 'out', 'outln',
-            'input', 'exit', 'append', 'reserve', 'typeis', 'mod',
+            'input', 'exit', 'append', 'reserve', 'typeis', 'mod', 'eval',
         }
         self.modifiers = {'const', 'static', 'global', 'final', 'private', 'shadow', 'strict', 'ref'}
         self.types = {'str', 'char', 'bool', 'Type', 'Namespace',
@@ -134,6 +141,7 @@ class LumenLangLexer(QsciLexerCustom):
         self.special_keywords: Set[str] = set()
 
         self.define_macros: Set[str] = set()
+        self.macro_functions: Set[str] = set()
         self.struct_names: Set[str] = set()
 
         # Инкрементальный кэш документа: обновляется из SCN_MODIFIED,
@@ -142,6 +150,7 @@ class LumenLangLexer(QsciLexerCustom):
         self._text_bytes: bytes = b""
         self._lines: List[str] = []
         self._line_macros: List[Set[str]] = []          # #define-имена на строку
+        self._line_macro_fns: List[Set[str]] = []       # #macro-имена на строку
         self._line_structs: List[Set[str]] = []         # struct-имена на строку
         self._block_state: List[Tuple[bool, int]] = []  # (in_block, open_rel) на начало строки
         self._dirty: bool = True                        # текст изменился — обновить кэш
@@ -182,6 +191,7 @@ class LumenLangLexer(QsciLexerCustom):
             self.STYLE_COMMENT_DOC: "Documentation Comment",
             self.STYLE_COMMENT_QUESTION: "Question Comment",
             self.STYLE_DUNDER_METHOD: "Dunder Method",
+            self.STYLE_MACRO_FUNCTION: "Macro Function",
         }
         return descriptions.get(style, "")
 
@@ -224,7 +234,7 @@ class LumenLangLexer(QsciLexerCustom):
         base_font.setFixedPitch(True)
 
         # Фон по умолчанию для всех стилей
-        for style_id in range(19):
+        for style_id in range(20):
             self.setFont(base_font, style_id)
             self.setPaper(bg, style_id)
 
@@ -243,6 +253,7 @@ class LumenLangLexer(QsciLexerCustom):
         bold_font = QFont(base_font)
         bold_font.setBold(True)
         self.setFont(bold_font, self.STYLE_KEYWORD)
+        self.setFont(bold_font, self.STYLE_MACRO_FUNCTION)
 
         # Подчёркивание директив/макросов — из настройки
         # editor.underline_preprocessor (по умолчанию вкл; в C/C++ это же
@@ -469,7 +480,9 @@ class LumenLangLexer(QsciLexerCustom):
                     style = self.STYLE_NAMESPACE_ID
                     expecting_namespace = False
                 else:
-                    if word in self.define_macros:
+                    if word in self.macro_functions:
+                        style = self.STYLE_MACRO_FUNCTION
+                    elif word in self.define_macros:
                         style = self.STYLE_DEFINE_MACRO
                     elif word in self.directives:
                         style = self.STYLE_DIRECTIVE
@@ -598,23 +611,30 @@ class LumenLangLexer(QsciLexerCustom):
     def _rebuild_all(self):
         """Полная пересборка построчных кэшей из self._lines."""
         macros: Set[str] = set()
+        macro_fns: Set[str] = set()
         structs: Set[str] = set()
         line_macros = []
+        line_macro_fns = []
         line_structs = []
         block_state = [(False, -1)]
         in_block, open_rel = False, -1
         for line_text in self._lines:
             m = _extract_define_macros(line_text)
+            mf = _extract_macro_functions(line_text)
             s = _extract_structs(line_text)
             line_macros.append(m)
+            line_macro_fns.append(mf)
             line_structs.append(s)
             macros.update(m)
+            macro_fns.update(mf)
             structs.update(s)
             in_block, open_rel = self._line_state_after(in_block, open_rel, line_text)
             block_state.append((in_block, open_rel))
         self.define_macros = macros
+        self.macro_functions = macro_fns
         self.struct_names = structs
         self._line_macros = line_macros
+        self._line_macro_fns = line_macro_fns
         self._line_structs = line_structs
         self._block_state = block_state
         self._folding_dirty = True  # первый прогон фолдинга после пересборки
@@ -626,6 +646,7 @@ class LumenLangLexer(QsciLexerCustom):
             p = (False, -1)
             self._block_state[line + 1:line + 1] = [p] * lines_added
             self._line_macros[line + 1:line + 1] = [set()] * lines_added
+            self._line_macro_fns[line + 1:line + 1] = [set()] * lines_added
             self._line_structs[line + 1:line + 1] = [set()] * lines_added
         elif lines_added < 0:
             # Строка `line` (объединённая) сохраняется — её стартовое
@@ -634,28 +655,38 @@ class LumenLangLexer(QsciLexerCustom):
             for i in range(line + 1, hi):
                 if self._line_macros[i]:
                     self.define_macros.difference_update(self._line_macros[i])
+                if self._line_macro_fns[i]:
+                    self.macro_functions.difference_update(self._line_macro_fns[i])
                 if self._line_structs[i]:
                     self.struct_names.difference_update(self._line_structs[i])
             del self._block_state[line + 1:hi]
             del self._line_macros[line + 1:hi]
+            del self._line_macro_fns[line + 1:hi]
             del self._line_structs[line + 1:hi]
 
     def _rescan_affected_lines(self, editor, start_line: int, count: int):
         """Пересканирует изменившиеся строки: #define-макросы и struct-имена."""
         for i in range(start_line, min(start_line + count, len(self._line_macros))):
             old_m = self._line_macros[i]
+            old_mf = self._line_macro_fns[i]
             old_s = self._line_structs[i]
             if old_m:
                 self.define_macros.difference_update(old_m)
+            if old_mf:
+                self.macro_functions.difference_update(old_mf)
             if old_s:
                 self.struct_names.difference_update(old_s)
             line_text = editor.text(i)
             new_m = _extract_define_macros(line_text)
+            new_mf = _extract_macro_functions(line_text)
             new_s = _extract_structs(line_text)
             self._line_macros[i] = new_m
+            self._line_macro_fns[i] = new_mf
             self._line_structs[i] = new_s
             if new_m:
                 self.define_macros.update(new_m)
+            if new_mf:
+                self.macro_functions.update(new_mf)
             if new_s:
                 self.struct_names.update(new_s)
 

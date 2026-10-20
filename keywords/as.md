@@ -21,3 +21,10 @@ let narrow = 300 as i8;        // 44 (обёртка по модулю 256)
 ```lumen
 echo 2.9 as i64;               // 2
 ```
+
+Число к `bool`: ненулевое значение → `true`, ноль → `false`:
+```lumen
+echo 1 as bool;                // true
+echo 0 as bool;                // false
+echo 2.5 as bool;              // true
+```

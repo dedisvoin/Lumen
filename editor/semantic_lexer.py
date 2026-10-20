@@ -49,6 +49,7 @@ _STYLE_DUNDER = 15
 _STYLE_COMMENT_DOC = 16      # //! комментарий-указание
 _STYLE_COMMENT_QUESTION = 17 # //? комментарий-вопрос/warning
 _STYLE_TYPE_PARAM = 18       # дженерик-параметр (typeParameter)
+_STYLE_MACRO_FUNCTION = 19   # имя #macro-функции (macroFunction)
 
 # Языки, где __method__ — настоящий dunder (не C++-интринсик вроде __func__).
 _DUNDER_LANGUAGES = frozenset({"python", "lumenlang"})
@@ -77,6 +78,7 @@ _SEM_TOKEN_MAP = {
     "event":         (_STYLE_VARIABLE, "variable", False, False),
     "enumMember":    (_STYLE_LITERAL, "literal", False, False),
     "macro":         (_STYLE_MACRO, "define_macro", False, False),
+    "macroFunction": (_STYLE_MACRO_FUNCTION, "macro_function", False, False),
     "decorator":     (_STYLE_MACRO, "directive", False, False),
     "comment":       (_STYLE_COMMENT, "comment", False, True),
     "string":        (_STYLE_STRING, "string", False, False),
@@ -106,6 +108,7 @@ _SEM_STYLE_NAMES = {
     _STYLE_COMMENT_DOC: "DocComment",
     _STYLE_COMMENT_QUESTION: "QuestionComment",
     _STYLE_TYPE_PARAM: "TypeParameter",
+    _STYLE_MACRO_FUNCTION: "MacroFunction",
 }
 
 # --- лексический fallback (то, чего LSP-сервер не шлёт) ---
@@ -185,6 +188,9 @@ class SemanticLexer(QsciLexerCustom):
         self._string_res.append(re.compile(rb'"(?:\\.|[^"\\\n])*"'))
         self._char_re = re.compile(rb"'(?:\\.|[^'\\\n])*'")
         self._preproc_re = re.compile(rb"(?m)^[ \t]*#\w+")
+        # #macro NAME — имя макрофункции (группа 1), для lumenlang-fallback
+        self._macro_fn_re = re.compile(
+            rb"(?m)^[ \t]*#macro[ \t]+([A-Za-z_][A-Za-z0-9_]*)")
 
     def language(self) -> str:
         return self._language
@@ -267,6 +273,7 @@ class SemanticLexer(QsciLexerCustom):
         seen[_STYLE_COMMENT_DOC] = ("comment_doc", False, False)
         seen[_STYLE_COMMENT_QUESTION] = ("comment_question", False, True)
         seen[_STYLE_TYPE_PARAM] = ("type_parameter", False, True)
+        seen[_STYLE_MACRO_FUNCTION] = ("macro_function", True, False)
 
         self._underline_styles = set()
         for style_id, (key, bold, italic) in seen.items():
@@ -568,6 +575,14 @@ class SemanticLexer(QsciLexerCustom):
                 if not in_string(s0):
                     items.append((s0, m.end() - m.start(),
                                   _STYLE_MACRO, _PRIO_LEX_OVERRIDE))
+        # #macro NAME: имя макрофункции — отдельный стиль (lumenlang)
+        if self._language == "lumenlang":
+            for m in self._macro_fn_re.finditer(seg):
+                ns, ne = m.span(1)
+                s0 = start + ns
+                if not in_string(s0) and not in_comment(s0):
+                    items.append((s0, ne - ns,
+                                  _STYLE_MACRO_FUNCTION, _PRIO_LEX_OVERRIDE))
         for m in self._type_re.finditer(seg):
             items.append((start + m.start(), m.end() - m.start(),
                           _STYLE_TYPE, _PRIO_LEX))

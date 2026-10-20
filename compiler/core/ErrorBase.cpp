@@ -1333,7 +1333,7 @@ namespace DEEP_ERRORS {
             msg += op; msg += "' against type '";
             msg += right; msg += "'";
         }
-        String hint = "Only numeric and string values support comparison operators.";
+        String hint = "Only numeric values (and enums) support ordering comparison operators; strings support only == and !=.";
         if (op == "==" || op == "!=")
             hint = "Only comparable types support equality (numeric, bool, char, string, null, type).";
         return BaseError(msg, start, end)
@@ -1803,6 +1803,34 @@ BaseError NAMED_ARG_ON_DYNAMIC_CALL(const Token& token, const String& fname) noe
             .withHint("A static field lives on the type, not on an instance, so it is reached "
                       "through 'Struct::" + fname + "' and is visible to any code that can name the "
                       "struct. Drop 'private' or move the value into a private instance field.");
+    }
+
+    // ——— Блок вычисления `eval { ... }` (M7/M8) ———
+
+    BaseError EVAL_NOT_TOP_LEVEL(const Token& token) noexcept {
+        return BaseError("'eval' block is only allowed at the top level", token)
+            .withType(MessageType::SyntaxError)
+            .withCode(128)
+            .withHint("Move the 'eval { ... }' block out of any function, loop, branch, "
+                      "namespace or other block so it sits directly at file scope.");
+    }
+
+    BaseError EVAL_NOT_CONST(const Token& token, const String& what) noexcept {
+        String msg = "'eval' block must be compile-time only, found ";
+        msg += what;
+        return BaseError(msg, token)
+            .withType(MessageType::ExecutableError)
+            .withCode(129)
+            .withHint("Inside 'eval' only pure computation is allowed: no 'input', no 'extern', "
+                      "no native calls and no other run-time-only effects.");
+    }
+
+    BaseError EVAL_BUDGET_EXCEEDED(const Token& token) noexcept {
+        return BaseError("'eval' block exceeded the analysis iteration budget", token)
+            .withType(MessageType::ExecutableError)
+            .withCode(130)
+            .withHint("An 'eval' block must terminate quickly; reduce the amount of work it "
+                      "performs at analysis time.");
     }
 } // namespace DEEP_ERRORS
 

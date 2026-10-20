@@ -140,6 +140,7 @@
     "function_name": {
       "color": "#a79ad2"
     },
+    "macro_function": {"color": "#9e6b47", "bold": true},
     "variable": {
       "color": "#7a6472"
     },

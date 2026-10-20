@@ -43,6 +43,7 @@
     "class_name": {"color": "#4ec9b0", "bold": true},
     "namespace": {"color": "#9cdcfe"},
     "function_name": {"color": "#dcdcaa"},
+    "macro_function": {"color": "#63c8dc", "bold": true},
     "variable": {"color": "#d4d4d4"},
     "self": {"color": "#29b8db"},
 

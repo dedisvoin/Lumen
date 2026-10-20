@@ -18,6 +18,10 @@ struct CompilerArgs {
     bool RUN_INTERPRET = false;   // -r: выполнить DeepAnalizer (интерпретатор) и вывести результат echo
     bool SHOW_HELP = false;       // -h: показать справку
     bool NO_DEEP_ANALYZE = false; // -noanalize: пропустить глубокий анализ при компиляции
+    bool BENCHMARK = false;       // -bench: замерить время выполнения (интерпретатор vs нативный бинарник)
+    int  BENCH_RUNS = 3;          // -benchruns <n>: прогонов нативного бинарника (берётся лучший)
+    bool USE_TYPE_ANALYZER = false; // -types: тип-ориентированный анализ без исполнения (вместо интерпретатора)
+    bool STRICT_DEEP = false;       // -deep/--strict: полный интерпретатор в обычной сборке (откат к старому поведению)
 
     // Optimization
     String OPT_LEVEL;             // -O1, -O2, -O3: уровень оптимизации g++ (по умолчанию -O2)
@@ -62,6 +66,18 @@ CompilerArgs parseToArgs(const std:: vector<String>& data) noexcept {
             args.SHOW_HELP = true;
         } else if (data[i] == "-noanalize") {
             args.NO_DEEP_ANALYZE = true;
+        } else if (data[i] == "-types") {
+            args.USE_TYPE_ANALYZER = true;
+        } else if (data[i] == "-deep" || data[i] == "--strict") {
+            args.STRICT_DEEP = true;
+        } else if (data[i] == "-bench" || data[i] == "-time") {
+            args.BENCHMARK = true;
+        } else if (data[i] == "-benchruns") {
+            if (i == data.size() - 1) outError("waited the run count next the '-benchruns' flag");
+            try { args.BENCH_RUNS = std::stoi(data[i + 1].to_utf8()); }
+            catch (...) { outError("invalid run count for '-benchruns'"); }
+            if (args.BENCH_RUNS < 1) args.BENCH_RUNS = 1;
+            i++;
         } else if (data[i] == "-O1" || data[i] == "-O2" || data[i] == "-O3") {
             args.OPT_LEVEL = data[i];
         }
@@ -98,6 +114,10 @@ void printHelp() noexcept {
     flag("-tree",           "Print AST tree to stdout");
     flag("-O1 / -O2 / -O3", "Optimization level for g++");
     flag("-noanalize",      "Skip deep analysis stage during compilation");
+    flag("-types",          "Use type-only analysis (no code execution) instead of the interpreter");
+    flag("-deep/--strict",  "Use the full interpreter during normal builds (default: type-only analysis)");
+    flag("-bench",          "Measure execution time: interpreter vs native build (implies -build, -O2)");
+    flag("-benchruns <n>",  "Native run count for -bench, keeps the best (default 3)");
     flag("-h",              "Show this help message");
 
     std::cout << "\n" << Style("Examples:\n", TerminalStyle::BRIGHT_CYAN);

@@ -46,6 +46,7 @@
 #include "core/Nodes/NodeExit.cpp"
 #include "core/Nodes/NodeAppend.cpp"
 #include "core/Nodes/NodeReserve.cpp"
+#include "core/Nodes/NodeEvalBlock.cpp"
 #include "core/Nodes/NodeEcho.cpp"
 #include "core/Nodes/NodeInput.cpp"
 #include "core/LangSpec.cpp"
@@ -72,6 +73,10 @@ struct ASTGenerator final {
     // Глубина вложенности для контекстных проверок синтаксиса
     size_t function_depth = 0;
     size_t loop_depth = 0;
+
+    // Глубина вложенности стейтментов: 1 — верхний уровень файла. Нужна для
+    // правила размещения блока `eval { ... }` (только top-level).
+    size_t statement_depth = 0;
 
     // Тело struct: в нём extern-декларации (методы без тела) запрещены (фаза 1)
     bool in_struct_body = false;
@@ -1972,7 +1977,16 @@ struct ASTGenerator final {
         return false;
     }
 
+    // Обёртка ведёт счётчик глубины стейтментов (см. statement_depth): верхний
+    // уровень файла — 1. Используется правилом размещения `eval` (top-level).
     Node* parseStatement() {
+        ++statement_depth;
+        Node* result = parseStatementInner();
+        --statement_depth;
+        return result;
+    }
+
+    Node* parseStatementInner() {
         if (walker.CheckType(TokenTypes::KEYWORD) && isModifierKeyword(walker.safeGet().value)) {
             return parseModifier();
         }
@@ -1990,6 +2004,9 @@ struct ASTGenerator final {
         }
         else if (walker.Check(TokenTypes::KEYWORD, "for")) {
             return parseFor();
+        }
+        else if (walker.Check(TokenTypes::KEYWORD, "eval")) {
+            return parseEvalBlock();
         }
         else if (walker.Check(TokenTypes::KEYWORD, "namespace")) {
             return parseNamespace();
@@ -2071,6 +2088,28 @@ struct ASTGenerator final {
             consumeStatementEnd();
         }
         return lhs;
+    }
+
+    // eval { ... } | eval <стейтмент> — вычисление на этапе анализа. Разрешён
+    // только на верхнем уровне файла (не внутри функции/цикла/ветки/namespace/блока).
+    Node* parseEvalBlock() {
+        Token evalTok = walker.safeGet();
+        walker.Next(); // съедаем eval
+
+        // Тело — либо блок `{ ... }`, либо одиночный стейтмент.
+        Node* body;
+        if (walker.CheckType(TokenTypes::BRACE_LEFT_CURVE))
+            body = parseStatementScope();
+        else
+            body = parseStatement();
+
+        Token endTok = walker.safeGet(-1);   // закрывающая '}' блока или последний токен
+        Node* node = new struct NodeEvalBlock(evalTok, endTok, body);
+
+        if (statement_depth > 1)
+            reportError(DEEP_ERRORS::EVAL_NOT_TOP_LEVEL(evalTok));
+
+        return node;
     }
 
     Node* parse() {
