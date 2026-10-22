@@ -1253,6 +1253,55 @@ struct TypeAnalyzer {
                 mergeBranches(base, after, base);
                 return;
             }
+            case NodeTypes::NodeForEach: {
+                auto* fe = static_cast<struct NodeForEach*>(n);
+                StaticValue src = infer(fe->source);
+                Type elem = Ty::Any;
+                // `Any` = тип неизвестен (например, обобщённая структура, чей тип
+                // не удалось вывести). Такие случаи НЕ диагностируем: сравнение
+                // Type с Any всегда истинно, поэтому `src.type == Ty::Str` и т.п.
+                // дают ложные срабатывания.
+                const bool known = !src.type.is_any && !src.type.is_auto;
+                if ((src.type.isArray() || src.type.isTuple()) && !src.type.container_1.empty())
+                    elem = src.type.container_1[0];
+                else if (known && src.type == Ty::Str)
+                    elem = Ty::Char;
+                if (fe->by_ref && known && src.type == Ty::Str) {
+                    Token tk = fe->decl ? fe->decl->name_token : fe->of_token;
+                    addDiag(fe, SEMANTIC_ERRORS::REF_BAD_TARGET(
+                        tk, fe->decl ? fe->decl->name : String("element")));
+                }
+                // `ref`-цикл по обёртке с `__of__`, возвращающим контейнер ПО ЗНАЧЕНИЮ,
+                // бесполезен (правка ушла бы в копию) — отклоняем, как и интерпретатор.
+                if (fe->by_ref && src.type.isStruct()) {
+                    auto sit = struct_syms.find(src.type.name);
+                    if (sit != struct_syms.end()) {
+                        auto mit = sit->second.methods.find(String(U"__of__"));
+                        if (mit != sit->second.methods.end() && !mit->second.empty()
+                                && mit->second[0].decl
+                                && !static_cast<struct NodeFunctionDeclaration*>(mit->second[0].decl)->returns_ref) {
+                            Token tk = fe->decl ? fe->decl->name_token : fe->of_token;
+                            addDiag(fe, SEMANTIC_ERRORS::REF_BAD_TARGET(
+                                tk, fe->decl ? fe->decl->name : String("element")));
+                        }
+                    }
+                }
+                auto base = scopes;
+                pushScope();
+                StaticValue ev;
+                ev.type = elem;
+                if (fe->decl && fe->decl->type_node) {
+                    Type ann = typeFromTypeExpr(fe->decl->type_node);
+                    if (!ann.is_auto) ev.type = ann;
+                }
+                if (fe->by_ref) ev.immutable = false;
+                if (fe->decl) declare(fe->decl->name, ev);
+                pushScope(); statement(fe->body); popScope();
+                auto after = scopes;
+                scopes = base;
+                mergeBranches(base, after, base);
+                return;
+            }
             case NodeTypes::NodeReturn: {
                 auto* r = static_cast<struct NodeReturn*>(n);
                 StaticValue v = infer(r->expr);

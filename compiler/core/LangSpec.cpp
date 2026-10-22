@@ -11,6 +11,7 @@ namespace Literals {
     const static std:: vector<String> KEYWORDS = {
         "let",
         "for",
+        "of",
         "while",
         "break",
         "continue",

@@ -1617,6 +1617,8 @@ static std::string findFunctionDoc(Node* n, const std::string& name) {
             return findFunctionDoc(static_cast<struct NodeWhile*>(n)->body, name);
         case NodeTypes::NodeFor:
             return findFunctionDoc(static_cast<struct NodeFor*>(n)->body, name);
+        case NodeTypes::NodeForEach:
+            return findFunctionDoc(static_cast<struct NodeForEach*>(n)->body, name);
         case NodeTypes::NodeLambda:
             return findFunctionDoc(static_cast<struct NodeLambda*>(n)->body, name);
         case NodeTypes::NodeReturn:
@@ -1889,6 +1891,10 @@ static void enclosingFunctionWalk(Node* n,
             return;
         case NodeTypes::NodeFor:
             enclosingFunctionWalk(static_cast<struct NodeFor*>(n)->body,
+                                  tokens, lineStarts, off, best, bestLen);
+            return;
+        case NodeTypes::NodeForEach:
+            enclosingFunctionWalk(static_cast<struct NodeForEach*>(n)->body,
                                   tokens, lineStarts, off, best, bestLen);
             return;
         case NodeTypes::NodeLambda:
@@ -2412,6 +2418,11 @@ static void collectParamScopes(Node* n,
             collectParamScopes(f->body, tokens, lineStarts, out);
             break;
         }
+        case NodeTypes::NodeForEach: {
+            auto* f = static_cast<struct NodeForEach*>(n);
+            collectParamScopes(f->body, tokens, lineStarts, out);
+            break;
+        }
 case NodeTypes::NodeLambda: {
             auto* l = static_cast<struct NodeLambda*>(n);
             // Р»СЏРјР±РґР° РЅРµ РЅРµСЃС‘С‚ С‚РѕРєРµРЅРѕРІ РїРѕР»РѕР¶РµРЅРёСЏ вЂ” РїР°СЂР°РјРµС‚СЂС‹ РїСЂРёРїРёСЃС‹РІР°РµРј СЃРєРѕСѓРїСѓ
@@ -2502,6 +2513,11 @@ static void collectSymbolNames(Node* n,
         }
         case NodeTypes::NodeFor: {
             auto* f = static_cast<struct NodeFor*>(n);
+            collectSymbolNames(f->body, fns, nss, types);
+            break;
+        }
+        case NodeTypes::NodeForEach: {
+            auto* f = static_cast<struct NodeForEach*>(n);
             collectSymbolNames(f->body, fns, nss, types);
             break;
         }
@@ -2775,6 +2791,10 @@ static void collectEnclosingFnsWalk(Node* n, const std::vector<Token>& tokens,
             return;
         case NodeTypes::NodeFor:
             collectEnclosingFnsWalk(static_cast<struct NodeFor*>(n)->body,
+                                    tokens, lineStarts, off, chain);
+            return;
+        case NodeTypes::NodeForEach:
+            collectEnclosingFnsWalk(static_cast<struct NodeForEach*>(n)->body,
                                     tokens, lineStarts, off, chain);
             return;
         case NodeTypes::NodeLambda:
@@ -3170,6 +3190,11 @@ static void buildGenericScopes(Node* n,
         }
         case NodeTypes::NodeFor: {
             auto* f = static_cast<struct NodeFor*>(n);
+            buildGenericScopes(f->body, tokens, lineStarts, out);
+            break;
+        }
+        case NodeTypes::NodeForEach: {
+            auto* f = static_cast<struct NodeForEach*>(n);
             buildGenericScopes(f->body, tokens, lineStarts, out);
             break;
         }

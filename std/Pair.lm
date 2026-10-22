@@ -1,25 +1,19 @@
-#pragma once
-
 #include "std/Typing.lm"
+struct[FirstT, SecondT] Pair {
+    let _box: Tuple[FirstT, SecondT] = !{};
 
-struct[FirstT: Type, SecondT: Type] Pair {
-    final strict let first: FirstT;
-    final strict let second: SecondT;
+    static fn from[A, B](first: A, second: B) -> Pair[A, B] : 
+        ret Pair[A, B]{_box: !{first, second}};
     
-    static fn from[A, B](first: A, second: B) -> Pair[A, B]  : {
-        ret Pair[A, B]{first:  first, second:  second};
+
+    fn first(ref self: Pair[FirstT, SecondT]) -> FirstT : ret self._box[0]; 
+    fn second(ref self: Pair[FirstT, SecondT]) -> SecondT : ret self._box[1]; 
+
+    fn __get_index__(ref self: Pair[FirstT, SecondT], index: Numeric) -> FirstT | SecondT : {
+        if (index == 0) ret self._box[0];
+        else if (index == 1) ret self._box[1];
+        else assert false, "bad index";
     }
-    
-    const fn swap(self) -> Pair[SecondT, FirstT]  : {
-        ret Pair[SecondT, FirstT]{
-            first_: self.second_, 
-            second_: self.first_
-        };
-    }
-    
-    fn __get_index__(ref self, index: Numeric) -> FirstT | SecondT  : {
-        if (index == 0) ret self.first;
-        else if (index == 1) ret self.second;
-        else assert false, "Ivalid index, must be 0 or 1.";
-    }
+
+    fn __of__(ref self: Pair[FirstT, SecondT]) -> ref Tuple[FirstT, SecondT] :  ret self._box; 
 }

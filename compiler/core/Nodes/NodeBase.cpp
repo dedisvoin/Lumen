@@ -11,6 +11,7 @@ enum NodeTypes {
     NodeIf,
     NodeWhile,
     NodeFor,
+    NodeForEach,
     NodeBreak,
     NodeContinue,
     NodeReturn,

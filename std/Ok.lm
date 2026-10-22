@@ -13,26 +13,3 @@ struct[Ok_T = Null] Ok {
         ret self.res;
     }
 }
-
-fn div[A, B](a: A, b: B) -> Ok[?A | B] : {
-    if (b == 0) {
-        ret Ok();
-    } 
-    ret Ok(a / b);
-}
-
-
-
-
-eval {
-    let res = div(10, 3);
-    echo res?;
-}
-
-
-
-
-
-
-
-

@@ -9,30 +9,30 @@
 struct ASTAnalizer {
     AbstractTreeT ast;
     ErrorContainer& error_container;
-    std::vector<NodeTypes> ctx;   // стек контекста: в какие declaration мы вложены
+    std::vector<NodeTypes> ctx;   // СЃС‚РµРє РєРѕРЅС‚РµРєСЃС‚Р°: РІ РєР°РєРёРµ declaration РјС‹ РІР»РѕР¶РµРЅС‹
 
     ASTAnalizer(AbstractTreeT ast, ErrorContainer& error_container) : ast(ast), error_container(error_container) {}
 
-    // находимся ли сейчас внутри тела struct (для visibility-модификаторов)
+    // РЅР°С…РѕРґРёРјСЃСЏ Р»Рё СЃРµР№С‡Р°СЃ РІРЅСѓС‚СЂРё С‚РµР»Р° struct (РґР»СЏ visibility-РјРѕРґРёС„РёРєР°С‚РѕСЂРѕРІ)
     bool insideStruct() const {
         for (auto t : ctx)
             if (t == NodeTypes::NodeStructDeclaration) return true;
         return false;
     }
-    // находимся ли сейчас внутри тела namespace (private/public допустимы и там)
+    // РЅР°С…РѕРґРёРјСЃСЏ Р»Рё СЃРµР№С‡Р°СЃ РІРЅСѓС‚СЂРё С‚РµР»Р° namespace (private/public РґРѕРїСѓСЃС‚РёРјС‹ Рё С‚Р°Рј)
     bool insideNamespace() const {
         for (auto t : ctx)
             if (t == NodeTypes::NodeNamespace) return true;
         return false;
     }
-    // находимся ли сейчас внутри тела функции (static-локальные let)
+    // РЅР°С…РѕРґРёРјСЃСЏ Р»Рё СЃРµР№С‡Р°СЃ РІРЅСѓС‚СЂРё С‚РµР»Р° С„СѓРЅРєС†РёРё (static-Р»РѕРєР°Р»СЊРЅС‹Рµ let)
     bool insideFunction() const {
         for (auto t : ctx)
             if (t == NodeTypes::NodeFunctionDeclaration) return true;
         return false;
     }
 
-    // допустимые цели модификатора (поверхностная проверка)
+    // РґРѕРїСѓСЃС‚РёРјС‹Рµ С†РµР»Рё РјРѕРґРёС„РёРєР°С‚РѕСЂР° (РїРѕРІРµСЂС…РЅРѕСЃС‚РЅР°СЏ РїСЂРѕРІРµСЂРєР°)
     bool isModifierTarget(Node* s) const {
         if (!s) return false;
         switch (s->type) {
@@ -48,6 +48,28 @@ struct ASTAnalizer {
         }
     }
 
+    // РЎС‚СЂСѓРєС‚СѓСЂРЅР°СЏ РїСЂРѕРІРµСЂРєР° l-value РґР»СЏ `ref let x; of <РёСЃС‚РѕС‡РЅРёРє>`: РёСЃС‚РѕС‡РЅРёРє РґРѕР»Р¶РµРЅ
+    // Р±С‹С‚СЊ Р°РґСЂРµСЃСѓРµРјС‹Рј РїСѓС‚С‘Рј (РїРµСЂРµРјРµРЅРЅР°СЏ, РїРѕР»Рµ, СЌР»РµРјРµРЅС‚, СЂР°Р·С‹РјРµРЅРѕРІР°РЅРёРµ, Ns::member,
+    // РІС‹Р·РѕРІ, РІРѕР·РІСЂР°С‰Р°СЋС‰РёР№ СЃСЃС‹Р»РєСѓ). РљРѕРїРёСЂСѓСЋС‰Р°СЏ С„РѕСЂРјР° (`let x; of ...`) вЂ” Р±РµР· РѕРіСЂР°РЅРёС‡РµРЅРёР№.
+    bool isRefPath(Node* s) const {
+        if (!s) return false;
+        while (s->type == NodeTypes::NodeScope)
+            s = static_cast<struct NodeScope*>(s)->node;
+        switch (s->type) {
+            case NodeTypes::NodeVariable:
+            case NodeTypes::NodeUnaryDereference:
+            case NodeTypes::NodeFunctionCall:
+            case NodeTypes::NodeBinaryScopeResolution:
+                return true;
+            case NodeTypes::NodeMemberAccess:
+                return isRefPath(static_cast<struct NodeMemberAccess*>(s)->l_node);
+            case NodeTypes::NodeArrayAccess:
+                return isRefPath(static_cast<struct NodeArrayAccess*>(s)->base);
+            default:
+                return false;
+        }
+    }
+
     bool containsExit(Node* node, bool in_loop = false, bool in_func = false) {
         if (!node) return false;
         if (node->type == NodeTypes::NodeBreak)
@@ -55,7 +77,7 @@ struct ASTAnalizer {
         if (node->type == NodeTypes::NodeReturn)
             return !in_func;
         if (node->type == NodeTypes::NodeExit)
-            return true; // exit — безусловное завершение всей программы
+            return true; // exit вЂ” Р±РµР·СѓСЃР»РѕРІРЅРѕРµ Р·Р°РІРµСЂС€РµРЅРёРµ РІСЃРµР№ РїСЂРѕРіСЂР°РјРјС‹
         switch (node->type) {
             case NodeTypes::NodeStatementsScope:
                 for (auto c : static_cast<struct NodeStatementsScope*>(node)->nodes)
@@ -76,6 +98,10 @@ struct ASTAnalizer {
                 return containsExit(n->init, in_loop, in_func) || containsExit(n->check, in_loop, in_func) ||
                        containsExit(n->update, in_loop, in_func) || containsExit(n->body, true, in_func);
             }
+            case NodeTypes::NodeForEach: {
+                auto n = static_cast<struct NodeForEach*>(node);
+                return containsExit(n->source, in_loop, in_func) || containsExit(n->body, true, in_func);
+            }
             case NodeTypes::NodeFunctionDeclaration:
                 return containsExit(static_cast<struct NodeFunctionDeclaration*>(node)->body, in_loop, true);
             case NodeTypes::NodeStructDeclaration:
@@ -87,7 +113,7 @@ struct ASTAnalizer {
             case NodeTypes::NodeLambda:
                 return containsExit(static_cast<struct NodeLambda*>(node)->body, in_loop, true);
             case NodeTypes::NodeVariableDeclaration:
-                return false; // не заходим в выражения деклараций
+                return false; // РЅРµ Р·Р°С…РѕРґРёРј РІ РІС‹СЂР°Р¶РµРЅРёСЏ РґРµРєР»Р°СЂР°С†РёР№
             case NodeTypes::NodeBinaryMultiplicative:
             case NodeTypes::NodeBinaryDivision:
             case NodeTypes::NodeBinaryRemainder:
@@ -221,7 +247,7 @@ struct ASTAnalizer {
         }
     }
 
-    // условие цикла статически истинно (while (true) / while (1) / while (1.0))
+    // СѓСЃР»РѕРІРёРµ С†РёРєР»Р° СЃС‚Р°С‚РёС‡РµСЃРєРё РёСЃС‚РёРЅРЅРѕ (while (true) / while (1) / while (1.0))
     bool isAlwaysTrue(Node* cond) {
         if (!cond) return false;
         if (cond->type == NodeTypes::NodeBool)
@@ -233,7 +259,7 @@ struct ASTAnalizer {
         return false;
     }
 
-    // условие статически ложно (if(false)/while(false)/while(0)/while(0.0))
+    // СѓСЃР»РѕРІРёРµ СЃС‚Р°С‚РёС‡РµСЃРєРё Р»РѕР¶РЅРѕ (if(false)/while(false)/while(0)/while(0.0))
     bool isAlwaysFalse(Node* cond) {
         if (!cond) return false;
         if (cond->type == NodeTypes::NodeBool)
@@ -245,7 +271,7 @@ struct ASTAnalizer {
         return false;
     }
 
-    // тело цикла/ветки пустое (блок {} без операторов)
+    // С‚РµР»Рѕ С†РёРєР»Р°/РІРµС‚РєРё РїСѓСЃС‚РѕРµ (Р±Р»РѕРє {} Р±РµР· РѕРїРµСЂР°С‚РѕСЂРѕРІ)
     bool isEmptyBody(Node* body) {
         if (!body) return false;
         if (body->type == NodeTypes::NodeStatementsScope)
@@ -255,8 +281,8 @@ struct ASTAnalizer {
         return false;
     }
 
-    // структурное равенство двух выражений (поверхностно, без типов/символов):
-    // используется для обнаружения самоприсваивания a = a, std::p = std::p, a.b = a.b, arr[0] = arr[0]
+    // СЃС‚СЂСѓРєС‚СѓСЂРЅРѕРµ СЂР°РІРµРЅСЃС‚РІРѕ РґРІСѓС… РІС‹СЂР°Р¶РµРЅРёР№ (РїРѕРІРµСЂС…РЅРѕСЃС‚РЅРѕ, Р±РµР· С‚РёРїРѕРІ/СЃРёРјРІРѕР»РѕРІ):
+    // РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ РґР»СЏ РѕР±РЅР°СЂСѓР¶РµРЅРёСЏ СЃР°РјРѕРїСЂРёСЃРІР°РёРІР°РЅРёСЏ a = a, std::p = std::p, a.b = a.b, arr[0] = arr[0]
     bool sameExpr(Node* a, Node* b) {
         if (!a && !b) return true;
         if (!a || !b) return false;
@@ -435,7 +461,7 @@ struct ASTAnalizer {
         }
     }
 
-    // токен первой «реальной» декларации в корне (для позиции ошибки отсутствия main)
+    // С‚РѕРєРµРЅ РїРµСЂРІРѕР№ В«СЂРµР°Р»СЊРЅРѕР№В» РґРµРєР»Р°СЂР°С†РёРё РІ РєРѕСЂРЅРµ (РґР»СЏ РїРѕР·РёС†РёРё РѕС€РёР±РєРё РѕС‚СЃСѓС‚СЃС‚РІРёСЏ main)
     Token firstDeclarationToken() {
         for (auto node : ast) {
             Node* n = node;
@@ -461,76 +487,76 @@ struct ASTAnalizer {
     }
 
     /*
-        semanticVisit — точка входа в поверхностный (shallow) семантический анализ, Pass 1.
+        semanticVisit вЂ” С‚РѕС‡РєР° РІС…РѕРґР° РІ РїРѕРІРµСЂС…РЅРѕСЃС‚РЅС‹Р№ (shallow) СЃРµРјР°РЅС‚РёС‡РµСЃРєРёР№ Р°РЅР°Р»РёР·, Pass 1.
 
-        Рекурсивно обходит всё дерево разбора (AST), начиная с корня, и для каждого
-        узла выполняет набор дешёвых статических проверок, не требующих построения
-        таблицы символов, разрешения типов или анализа области видимости. Все найденные
-        проблемы добавляются в error_container через фабрики из namespace SEMANTIC_ERRORS.
-        Обход продолжается до конца дерева (анализатор не останавливается на первой
-        ошибке), поэтому за один проход можно собрать сразу несколько сообщений.
+        Р РµРєСѓСЂСЃРёРІРЅРѕ РѕР±С…РѕРґРёС‚ РІСЃС‘ РґРµСЂРµРІРѕ СЂР°Р·Р±РѕСЂР° (AST), РЅР°С‡РёРЅР°СЏ СЃ РєРѕСЂРЅСЏ, Рё РґР»СЏ РєР°Р¶РґРѕРіРѕ
+        СѓР·Р»Р° РІС‹РїРѕР»РЅСЏРµС‚ РЅР°Р±РѕСЂ РґРµС€С‘РІС‹С… СЃС‚Р°С‚РёС‡РµСЃРєРёС… РїСЂРѕРІРµСЂРѕРє, РЅРµ С‚СЂРµР±СѓСЋС‰РёС… РїРѕСЃС‚СЂРѕРµРЅРёСЏ
+        С‚Р°Р±Р»РёС†С‹ СЃРёРјРІРѕР»РѕРІ, СЂР°Р·СЂРµС€РµРЅРёСЏ С‚РёРїРѕРІ РёР»Рё Р°РЅР°Р»РёР·Р° РѕР±Р»Р°СЃС‚Рё РІРёРґРёРјРѕСЃС‚Рё. Р’СЃРµ РЅР°Р№РґРµРЅРЅС‹Рµ
+        РїСЂРѕР±Р»РµРјС‹ РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ РІ error_container С‡РµСЂРµР· С„Р°Р±СЂРёРєРё РёР· namespace SEMANTIC_ERRORS.
+        РћР±С…РѕРґ РїСЂРѕРґРѕР»Р¶Р°РµС‚СЃСЏ РґРѕ РєРѕРЅС†Р° РґРµСЂРµРІР° (Р°РЅР°Р»РёР·Р°С‚РѕСЂ РЅРµ РѕСЃС‚Р°РЅР°РІР»РёРІР°РµС‚СЃСЏ РЅР° РїРµСЂРІРѕР№
+        РѕС€РёР±РєРµ), РїРѕСЌС‚РѕРјСѓ Р·Р° РѕРґРёРЅ РїСЂРѕС…РѕРґ РјРѕР¶РЅРѕ СЃРѕР±СЂР°С‚СЊ СЃСЂР°Р·Сѓ РЅРµСЃРєРѕР»СЊРєРѕ СЃРѕРѕР±С‰РµРЅРёР№.
 
-        ЧТО ИМЕННО ПРОВЕРЯЕТСЯ (по типам узлов)
+        Р§РўРћ РРњР•РќРќРћ РџР РћР’Р•Р РЇР•РўРЎРЇ (РїРѕ С‚РёРїР°Рј СѓР·Р»РѕРІ)
         ===========================================================================================
-        NodeModifier (реализовано в modifiersCheck, вызывается из этого case):
-            - дублирующийся модификатор в одной цепочке            -> DUPLICATE_MODIFIER (51)
-            - модификатор, применённый не к тому виду узла         -> MODIFIER_MISPLACED (50)
-            - на NodeVariableDeclaration:
-                * strict требует явного типа                        -> STRICT_REQUIRES_TYPE (53)
-                * const требует инициализатора (значения)           -> CONST_REQUIRES_VALUE (54)
-            - семантика модификатора относительно цели/контекста   -> MODIFIER_SEMANTICS (62, Warn):
-                * const/strict — только для переменных и namespace
-                * final        — допустим в любом контексте (без ограничений)
-                * static       — только для членов struct (fn/let), внутри struct (C++-style)
-                 * private/public— внутри struct ИЛИ namespace (см. ctx-стек)
-          Затем рекурсивно обходятся дочерние узлы модификатора.
+        NodeModifier (СЂРµР°Р»РёР·РѕРІР°РЅРѕ РІ modifiersCheck, РІС‹Р·С‹РІР°РµС‚СЃСЏ РёР· СЌС‚РѕРіРѕ case):
+            - РґСѓР±Р»РёСЂСѓСЋС‰РёР№СЃСЏ РјРѕРґРёС„РёРєР°С‚РѕСЂ РІ РѕРґРЅРѕР№ С†РµРїРѕС‡РєРµ            -> DUPLICATE_MODIFIER (51)
+            - РјРѕРґРёС„РёРєР°С‚РѕСЂ, РїСЂРёРјРµРЅС‘РЅРЅС‹Р№ РЅРµ Рє С‚РѕРјСѓ РІРёРґСѓ СѓР·Р»Р°         -> MODIFIER_MISPLACED (50)
+            - РЅР° NodeVariableDeclaration:
+                * strict С‚СЂРµР±СѓРµС‚ СЏРІРЅРѕРіРѕ С‚РёРїР°                        -> STRICT_REQUIRES_TYPE (53)
+                * const С‚СЂРµР±СѓРµС‚ РёРЅРёС†РёР°Р»РёР·Р°С‚РѕСЂР° (Р·РЅР°С‡РµРЅРёСЏ)           -> CONST_REQUIRES_VALUE (54)
+            - СЃРµРјР°РЅС‚РёРєР° РјРѕРґРёС„РёРєР°С‚РѕСЂР° РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ С†РµР»Рё/РєРѕРЅС‚РµРєСЃС‚Р°   -> MODIFIER_SEMANTICS (62, Warn):
+                * const/strict вЂ” С‚РѕР»СЊРєРѕ РґР»СЏ РїРµСЂРµРјРµРЅРЅС‹С… Рё namespace
+                * final        вЂ” РґРѕРїСѓСЃС‚РёРј РІ Р»СЋР±РѕРј РєРѕРЅС‚РµРєСЃС‚Рµ (Р±РµР· РѕРіСЂР°РЅРёС‡РµРЅРёР№)
+                * static       вЂ” С‚РѕР»СЊРєРѕ РґР»СЏ С‡Р»РµРЅРѕРІ struct (fn/let), РІРЅСѓС‚СЂРё struct (C++-style)
+                 * private/publicвЂ” РІРЅСѓС‚СЂРё struct РР›Р namespace (СЃРј. ctx-СЃС‚РµРє)
+          Р—Р°С‚РµРј СЂРµРєСѓСЂСЃРёРІРЅРѕ РѕР±С…РѕРґСЏС‚СЃСЏ РґРѕС‡РµСЂРЅРёРµ СѓР·Р»С‹ РјРѕРґРёС„РёРєР°С‚РѕСЂР°.
 
-        NodeStatementsScope / тела функций (NodeFunctionDeclaration), структур
-          (NodeStructDeclaration), пространств имён (NodeNamespace), лямбд (NodeLambda):
-            просто рекурсивно посещаются все вложенные узлы.
+        NodeStatementsScope / С‚РµР»Р° С„СѓРЅРєС†РёР№ (NodeFunctionDeclaration), СЃС‚СЂСѓРєС‚СѓСЂ
+          (NodeStructDeclaration), РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІ РёРјС‘РЅ (NodeNamespace), Р»СЏРјР±Рґ (NodeLambda):
+            РїСЂРѕСЃС‚Рѕ СЂРµРєСѓСЂСЃРёРІРЅРѕ РїРѕСЃРµС‰Р°СЋС‚СЃСЏ РІСЃРµ РІР»РѕР¶РµРЅРЅС‹Рµ СѓР·Р»С‹.
 
         NodeVariableDeclaration:
-            рекурсивно обходятся value_node (если есть — let x; без значения допустимо)
-            и type_node (если указан).
+            СЂРµРєСѓСЂСЃРёРІРЅРѕ РѕР±С…РѕРґСЏС‚СЃСЏ value_node (РµСЃР»Рё РµСЃС‚СЊ вЂ” let x; Р±РµР· Р·РЅР°С‡РµРЅРёСЏ РґРѕРїСѓСЃС‚РёРјРѕ)
+            Рё type_node (РµСЃР»Рё СѓРєР°Р·Р°РЅ).
 
         NodeWhile:
-            - если условие цикла статически истинно (while(true)/while(1)/while(1.0),
-              см. isAlwaysTrue) И в теле нет ни break, ни ret, выходящих именно из этого
-              цикла, выдаётся предупреждение                     -> INFINITE_LOOP (52, Warning)
-            - рекурсивно обходятся условие и тело.
+            - РµСЃР»Рё СѓСЃР»РѕРІРёРµ С†РёРєР»Р° СЃС‚Р°С‚РёС‡РµСЃРєРё РёСЃС‚РёРЅРЅРѕ (while(true)/while(1)/while(1.0),
+              СЃРј. isAlwaysTrue) Р РІ С‚РµР»Рµ РЅРµС‚ РЅРё break, РЅРё ret, РІС‹С…РѕРґСЏС‰РёС… РёРјРµРЅРЅРѕ РёР· СЌС‚РѕРіРѕ
+              С†РёРєР»Р°, РІС‹РґР°С‘С‚СЃСЏ РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ                     -> INFINITE_LOOP (52, Warning)
+            - СЂРµРєСѓСЂСЃРёРІРЅРѕ РѕР±С…РѕРґСЏС‚СЃСЏ СѓСЃР»РѕРІРёРµ Рё С‚РµР»Рѕ.
 
         NodeBinaryAssignment:
-            - если левая и правая части присваивания структурно идентичны (см. sameExpr:
-              x = x, a.b = a.b, arr[0] = arr[0], std::p = std::p и т.п.), выдаётся
-              предупреждение                                    -> SELF_ASSIGNMENT (55, Warning)
+            - РµСЃР»Рё Р»РµРІР°СЏ Рё РїСЂР°РІР°СЏ С‡Р°СЃС‚Рё РїСЂРёСЃРІР°РёРІР°РЅРёСЏ СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ РёРґРµРЅС‚РёС‡РЅС‹ (СЃРј. sameExpr:
+              x = x, a.b = a.b, arr[0] = arr[0], std::p = std::p Рё С‚.Рї.), РІС‹РґР°С‘С‚СЃСЏ
+              РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ                                    -> SELF_ASSIGNMENT (55, Warning)
 
         NodeOut / NodeOutln:
-            - вызов без аргументов (out; / out()) или со скобками, но пустым списком,
-              выдаёт предупреждение                             -> EMPTY_OUTPUT (56, Warning)
+            - РІС‹Р·РѕРІ Р±РµР· Р°СЂРіСѓРјРµРЅС‚РѕРІ (out; / out()) РёР»Рё СЃРѕ СЃРєРѕР±РєР°РјРё, РЅРѕ РїСѓСЃС‚С‹Рј СЃРїРёСЃРєРѕРј,
+              РІС‹РґР°С‘С‚ РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ                             -> EMPTY_OUTPUT (56, Warning)
 
-        Остальные выражения (NodeIf, NodeFor, NodeReturn, NodeBreak, NodeContinue,
-          NodeNew, NodeArray, унарные и бинарные операции, NodeBinaryScopeResolution,
-          NodeMemberAccess, NodeCast, NodeFunctionCall, NodeArrayAccess, типы данных,
-          NodeDelete, NodeScope и пр.):
-            не содержат собственных проверок на этом этапе — производится только
-            рекурсивный спуск в дочерние узлы, чтобы дойти до вышеперечисленных случаев.
+        РћСЃС‚Р°Р»СЊРЅС‹Рµ РІС‹СЂР°Р¶РµРЅРёСЏ (NodeIf, NodeFor, NodeReturn, NodeBreak, NodeContinue,
+          NodeNew, NodeArray, СѓРЅР°СЂРЅС‹Рµ Рё Р±РёРЅР°СЂРЅС‹Рµ РѕРїРµСЂР°С†РёРё, NodeBinaryScopeResolution,
+          NodeMemberAccess, NodeCast, NodeFunctionCall, NodeArrayAccess, С‚РёРїС‹ РґР°РЅРЅС‹С…,
+          NodeDelete, NodeScope Рё РїСЂ.):
+            РЅРµ СЃРѕРґРµСЂР¶Р°С‚ СЃРѕР±СЃС‚РІРµРЅРЅС‹С… РїСЂРѕРІРµСЂРѕРє РЅР° СЌС‚РѕРј СЌС‚Р°РїРµ вЂ” РїСЂРѕРёР·РІРѕРґРёС‚СЃСЏ С‚РѕР»СЊРєРѕ
+            СЂРµРєСѓСЂСЃРёРІРЅС‹Р№ СЃРїСѓСЃРє РІ РґРѕС‡РµСЂРЅРёРµ СѓР·Р»С‹, С‡С‚РѕР±С‹ РґРѕР№С‚Рё РґРѕ РІС‹С€РµРїРµСЂРµС‡РёСЃР»РµРЅРЅС‹С… СЃР»СѓС‡Р°РµРІ.
 
-        ЧЕГО ЭТА ФАЗА НЕ ДЕЛАЕТ (остаётся на глубокую фазу, Pass 2 / M3–M6):
-          - проверку совместимости типов и корректности операций по типам;
-          - использование неинициализированных / несуществующих имён;
-          - переопределение/затенение имён, области видимости;
-          - семантические алиасы (let y = &x; x = *y;) и константный фолд-анализ;
-          - проверку const-мутации по реальным символам.
+        Р§Р•Р“Рћ Р­РўРђ Р¤РђР—Рђ РќР• Р”Р•Р›РђР•Рў (РѕСЃС‚Р°С‘С‚СЃСЏ РЅР° РіР»СѓР±РѕРєСѓСЋ С„Р°Р·Сѓ, Pass 2 / M3вЂ“M6):
+          - РїСЂРѕРІРµСЂРєСѓ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё С‚РёРїРѕРІ Рё РєРѕСЂСЂРµРєС‚РЅРѕСЃС‚Рё РѕРїРµСЂР°С†РёР№ РїРѕ С‚РёРїР°Рј;
+          - РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ РЅРµРёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°РЅРЅС‹С… / РЅРµСЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС… РёРјС‘РЅ;
+          - РїРµСЂРµРѕРїСЂРµРґРµР»РµРЅРёРµ/Р·Р°С‚РµРЅРµРЅРёРµ РёРјС‘РЅ, РѕР±Р»Р°СЃС‚Рё РІРёРґРёРјРѕСЃС‚Рё;
+          - СЃРµРјР°РЅС‚РёС‡РµСЃРєРёРµ Р°Р»РёР°СЃС‹ (let y = &x; x = *y;) Рё РєРѕРЅСЃС‚Р°РЅС‚РЅС‹Р№ С„РѕР»Рґ-Р°РЅР°Р»РёР·;
+          - РїСЂРѕРІРµСЂРєСѓ const-РјСѓС‚Р°С†РёРё РїРѕ СЂРµР°Р»СЊРЅС‹Рј СЃРёРјРІРѕР»Р°Рј.
         */
-    // проверки, связанные с модификаторами (поверхностная семантика Pass 1):
-    // дубли в цепочке, неверное применение к цели, требования strict/const на переменной.
-    // Сюда же позже добавляются семантические правила (const/strict/final на нужной цели,
-    // static/public/private в нужном контексте).
+    // РїСЂРѕРІРµСЂРєРё, СЃРІСЏР·Р°РЅРЅС‹Рµ СЃ РјРѕРґРёС„РёРєР°С‚РѕСЂР°РјРё (РїРѕРІРµСЂС…РЅРѕСЃС‚РЅР°СЏ СЃРµРјР°РЅС‚РёРєР° Pass 1):
+    // РґСѓР±Р»Рё РІ С†РµРїРѕС‡РєРµ, РЅРµРІРµСЂРЅРѕРµ РїСЂРёРјРµРЅРµРЅРёРµ Рє С†РµР»Рё, С‚СЂРµР±РѕРІР°РЅРёСЏ strict/const РЅР° РїРµСЂРµРјРµРЅРЅРѕР№.
+    // РЎСЋРґР° Р¶Рµ РїРѕР·Р¶Рµ РґРѕР±Р°РІР»СЏСЋС‚СЃСЏ СЃРµРјР°РЅС‚РёС‡РµСЃРєРёРµ РїСЂР°РІРёР»Р° (const/strict/final РЅР° РЅСѓР¶РЅРѕР№ С†РµР»Рё,
+    // static/public/private РІ РЅСѓР¶РЅРѕРј РєРѕРЅС‚РµРєСЃС‚Рµ).
     void modifiersCheck(Node* node) {
         if (!node || node->type != NodeTypes::NodeModifier) return;
         auto m = static_cast<struct NodeModifier*>(node);
 
-        // собрать всю цепочку вложенных модификаторов и найти цель
+        // СЃРѕР±СЂР°С‚СЊ РІСЃСЋ С†РµРїРѕС‡РєСѓ РІР»РѕР¶РµРЅРЅС‹С… РјРѕРґРёС„РёРєР°С‚РѕСЂРѕРІ Рё РЅР°Р№С‚Рё С†РµР»СЊ
         std::vector<String> mods;
         std::vector<Token> mod_tokens;
         Node* target = node;
@@ -541,23 +567,23 @@ struct ASTAnalizer {
             target = mm->node;
         }
 
-        // дублирование модификаторов (напр. const const let x)
+        // РґСѓР±Р»РёСЂРѕРІР°РЅРёРµ РјРѕРґРёС„РёРєР°С‚РѕСЂРѕРІ (РЅР°РїСЂ. const const let x)
         std::map<String, bool> seen;
         for (size_t i = 0; i < mods.size(); ++i) {
             if (seen.count(mods[i])) {
                 error_container.addError(SEMANTIC_ERRORS::DUPLICATE_MODIFIER(mod_tokens[i], mods[i]));
-                break;   // одна ошибка на цепочку
+                break;   // РѕРґРЅР° РѕС€РёР±РєР° РЅР° С†РµРїРѕС‡РєСѓ
             }
             seen[mods[i]] = true;
         }
 
-        // неверное применение: цель не декларация/блок
+        // РЅРµРІРµСЂРЅРѕРµ РїСЂРёРјРµРЅРµРЅРёРµ: С†РµР»СЊ РЅРµ РґРµРєР»Р°СЂР°С†РёСЏ/Р±Р»РѕРє
         if (target && !isModifierTarget(target)) {
             error_container.addError(SEMANTIC_ERRORS::MODIFIER_MISPLACED(m->token, m->name));
         }
 
-        // модификаторы strict/const на цели-декларации ИЛИ блоке (strict { ... } / const { ... }):
-        // требование (явный тип / значение) переносится на все вложенные let-объявления
+        // РјРѕРґРёС„РёРєР°С‚РѕСЂС‹ strict/const РЅР° С†РµР»Рё-РґРµРєР»Р°СЂР°С†РёРё РР›Р Р±Р»РѕРєРµ (strict { ... } / const { ... }):
+        // С‚СЂРµР±РѕРІР°РЅРёРµ (СЏРІРЅС‹Р№ С‚РёРї / Р·РЅР°С‡РµРЅРёРµ) РїРµСЂРµРЅРѕСЃРёС‚СЃСЏ РЅР° РІСЃРµ РІР»РѕР¶РµРЅРЅС‹Рµ let-РѕР±СЉСЏРІР»РµРЅРёСЏ
         if (target && (target->type == NodeTypes::NodeVariableDeclaration ||
                        target->type == NodeTypes::NodeStatementsScope)) {
             bool has_strict = false, has_const = false;
@@ -576,7 +602,7 @@ struct ASTAnalizer {
             if (target->type == NodeTypes::NodeVariableDeclaration) {
                 checkVar(target);
             } else {
-                // блок: спускаемся во вложенные let/блоки/функции/структуры/пространства имён
+                // Р±Р»РѕРє: СЃРїСѓСЃРєР°РµРјСЃСЏ РІРѕ РІР»РѕР¶РµРЅРЅС‹Рµ let/Р±Р»РѕРєРё/С„СѓРЅРєС†РёРё/СЃС‚СЂСѓРєС‚СѓСЂС‹/РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІР° РёРјС‘РЅ
                 std::vector<Node*> stack{ target };
                 while (!stack.empty()) {
                     Node* n = stack.back(); stack.pop_back();
@@ -605,13 +631,13 @@ struct ASTAnalizer {
             }
         }
 
-        // семантика модификаторов: к чему применим и в каком контексте
+        // СЃРµРјР°РЅС‚РёРєР° РјРѕРґРёС„РёРєР°С‚РѕСЂРѕРІ: Рє С‡РµРјСѓ РїСЂРёРјРµРЅРёРј Рё РІ РєР°РєРѕРј РєРѕРЅС‚РµРєСЃС‚Рµ
         if (target) {
             for (size_t i = 0; i < mods.size(); ++i) {
                 const String& mod = mods[i];
                 Token mtok = mod_tokens[i];
                 if (mod == "const") {
-                    // `const fn` — read-only метод структуры (не может менять self)
+                    // `const fn` вЂ” read-only РјРµС‚РѕРґ СЃС‚СЂСѓРєС‚СѓСЂС‹ (РЅРµ РјРѕР¶РµС‚ РјРµРЅСЏС‚СЊ self)
                     bool is_const_method = target->type == NodeTypes::NodeFunctionDeclaration
                                            && insideStruct();
                     if (target->type != NodeTypes::NodeVariableDeclaration &&
@@ -638,11 +664,11 @@ struct ASTAnalizer {
                             mtok, mod, "static is allowed only for members (fn/let) inside a struct, "
                                       "or for a local 'let' inside a function body"));
                 } else if (mod == "ref") {
-                    // ref-декларация обязана быть `ref let name = <lvalue>;`
+                    // ref-РґРµРєР»Р°СЂР°С†РёСЏ РѕР±СЏР·Р°РЅР° Р±С‹С‚СЊ `ref let name = <lvalue>;`
                     if (target->type != NodeTypes::NodeVariableDeclaration)
                         error_container.addError(SEMANTIC_ERRORS::MODIFIER_SEMANTICS(
                             mtok, mod, "ref is allowed only on let-declarations ('ref let name = <lvalue>;')"));
-                    // ref нельзя комбинировать со static/private/final (план §8)
+                    // ref РЅРµР»СЊР·СЏ РєРѕРјР±РёРЅРёСЂРѕРІР°С‚СЊ СЃРѕ static/private/final (РїР»Р°РЅ В§8)
                     for (size_t j = 0; j < mods.size(); ++j) {
                         if (j == i) continue;
                         if (mods[j] == "static" || mods[j] == "private" || mods[j] == "final")
@@ -657,8 +683,8 @@ struct ASTAnalizer {
             }
         }
 
-        // рекурсия сразу в цель, без повторного обхода модификаторов
-        // (иначе цепочка проверялась бы несколько раз)
+        // СЂРµРєСѓСЂСЃРёСЏ СЃСЂР°Р·Сѓ РІ С†РµР»СЊ, Р±РµР· РїРѕРІС‚РѕСЂРЅРѕРіРѕ РѕР±С…РѕРґР° РјРѕРґРёС„РёРєР°С‚РѕСЂРѕРІ
+        // (РёРЅР°С‡Рµ С†РµРїРѕС‡РєР° РїСЂРѕРІРµСЂСЏР»Р°СЃСЊ Р±С‹ РЅРµСЃРєРѕР»СЊРєРѕ СЂР°Р·)
         semanticVisit(target);
     }
 
@@ -701,17 +727,17 @@ struct ASTAnalizer {
                 break;
             }
 
-            // ---- управление потоком ----
+            // ---- СѓРїСЂР°РІР»РµРЅРёРµ РїРѕС‚РѕРєРѕРј ----
             case NodeTypes::NodeIf: {
                 auto n = static_cast<struct NodeIf*>(node);
-                // константное условие if(true)/if(false) -> одна ветка мертва
+                // РєРѕРЅСЃС‚Р°РЅС‚РЅРѕРµ СѓСЃР»РѕРІРёРµ if(true)/if(false) -> РѕРґРЅР° РІРµС‚РєР° РјРµСЂС‚РІР°
                 if (isAlwaysTrue(n->condition) || isAlwaysFalse(n->condition)) {
                     error_container.addError(SEMANTIC_ERRORS::CONSTANT_CONDITION(n->token));
                 }
-                // пустое тело then/else
+                // РїСѓСЃС‚РѕРµ С‚РµР»Рѕ then/else
                 if (isEmptyBody(n->then_body))
                     error_container.addError(SEMANTIC_ERRORS::EMPTY_BODY(n->token));
-                // одинаковые ветки then/else
+                // РѕРґРёРЅР°РєРѕРІС‹Рµ РІРµС‚РєРё then/else
                 if (n->else_body && sameExpr(n->then_body, n->else_body)) {
                     error_container.addError(SEMANTIC_ERRORS::IDENTICAL_BRANCHES(n->token));
                 }
@@ -746,6 +772,20 @@ struct ASTAnalizer {
                 semanticVisit(n->body);
                 break;
             }
+            case NodeTypes::NodeForEach: {
+                auto n = static_cast<struct NodeForEach*>(node);
+                if (isEmptyBody(n->body))
+                    error_container.addError(SEMANTIC_ERRORS::EMPTY_BODY(n->token));
+                if (n->by_ref && !isRefPath(n->source)) {
+                    error_container.addError(SEMANTIC_ERRORS::REF_BAD_TARGET(
+                        n->decl ? n->decl->name_token : n->of_token,
+                        n->decl ? n->decl->name : String("element")));
+                }
+                semanticVisit(n->decl);
+                semanticVisit(n->source);
+                semanticVisit(n->body);
+                break;
+            }
             case NodeTypes::NodeReturn:
                 semanticVisit(static_cast<struct NodeReturn*>(node)->expr);
                 break;
@@ -774,10 +814,10 @@ struct ASTAnalizer {
                 semanticVisit(static_cast<struct NodeScope*>(node)->node);
                 break;
 
-            // ---- выражения ----
+            // ---- РІС‹СЂР°Р¶РµРЅРёСЏ ----
             case NodeTypes::NodeBinaryAssignment: {
                 auto n = static_cast<struct NodeBinaryAssignment*>(node);
-                // D1: самоприсваивание (структурно равные левая и правая части)
+                // D1: СЃР°РјРѕРїСЂРёСЃРІР°РёРІР°РЅРёРµ (СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ СЂР°РІРЅС‹Рµ Р»РµРІР°СЏ Рё РїСЂР°РІР°СЏ С‡Р°СЃС‚Рё)
                 if (n->l_node && n->r_node && sameExpr(n->l_node, n->r_node)) {
                     error_container.addError(SEMANTIC_ERRORS::SELF_ASSIGNMENT(n->start_token, n->end_token));
                 }
@@ -836,7 +876,7 @@ struct ASTAnalizer {
             }
             case NodeTypes::NodeOut: {
                 auto n = static_cast<struct NodeOut*>(node);
-                // D2: out() без аргументов
+                // D2: out() Р±РµР· Р°СЂРіСѓРјРµРЅС‚РѕРІ
                 if (n->exprs.empty())
                     error_container.addError(SEMANTIC_ERRORS::EMPTY_OUTPUT(n->token));
                 for (auto e : n->exprs) semanticVisit(e);
@@ -844,7 +884,7 @@ struct ASTAnalizer {
             }
             case NodeTypes::NodeOutln: {
                 auto n = static_cast<struct NodeOutln*>(node);
-                // D2: outln() без аргументов
+                // D2: outln() Р±РµР· Р°СЂРіСѓРјРµРЅС‚РѕРІ
                 if (n->exprs.empty())
                     error_container.addError(SEMANTIC_ERRORS::EMPTY_OUTPUT(n->token));
                 for (auto e : n->exprs) semanticVisit(e);
@@ -873,7 +913,7 @@ struct ASTAnalizer {
                 semanticVisit(static_cast<struct NodeInput*>(node)->prompt);
                 break;
 
-            // ---- унарные операции ----
+            // ---- СѓРЅР°СЂРЅС‹Рµ РѕРїРµСЂР°С†РёРё ----
             case NodeTypes::NodeUnaryMinus:
             case NodeTypes::NodeUnaryPlus:
             case NodeTypes::NodeUnaryNegation:
@@ -912,7 +952,7 @@ struct ASTAnalizer {
                 break;
             }
 
-            // ---- бинарные операции ----
+            // ---- Р±РёРЅР°СЂРЅС‹Рµ РѕРїРµСЂР°С†РёРё ----
             case NodeTypes::NodeBinaryMultiplicative:
             case NodeTypes::NodeBinaryDivision:
             case NodeTypes::NodeBinaryRemainder:
@@ -960,7 +1000,7 @@ struct ASTAnalizer {
                 break;
             }
 
-            // ---- типы ----
+            // ---- С‚РёРїС‹ ----
             case NodeTypes::NodeFunctionType: {
                 auto n = static_cast<struct NodeFunctionType*>(node);
                 for (auto g : n->generics) semanticVisit(g);
@@ -975,13 +1015,13 @@ struct ASTAnalizer {
                 auto n = static_cast<struct NodeArrayType*>(node);
                 semanticVisit(n->element_type);
                 semanticVisit(n->count);
-                // `Array[T, N]{…}` — тело конструктора: выражения элементов
-                // должны пройти семантику (переменные должны быть объявлены).
+                // `Array[T, N]{вЂ¦}` вЂ” С‚РµР»Рѕ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂР°: РІС‹СЂР°Р¶РµРЅРёСЏ СЌР»РµРјРµРЅС‚РѕРІ
+                // РґРѕР»Р¶РЅС‹ РїСЂРѕР№С‚Рё СЃРµРјР°РЅС‚РёРєСѓ (РїРµСЂРµРјРµРЅРЅС‹Рµ РґРѕР»Р¶РЅС‹ Р±С‹С‚СЊ РѕР±СЉСЏРІР»РµРЅС‹).
                 for (auto item : n->items) semanticVisit(item);
                 break;
             }
 
-            // ---- листья: нет детей ----
+            // ---- Р»РёСЃС‚СЊСЏ: РЅРµС‚ РґРµС‚РµР№ ----
             case NodeTypes::NodeNumber:
             case NodeTypes::NodeString:
             case NodeTypes::NodeBool:

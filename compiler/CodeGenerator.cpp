@@ -18,6 +18,7 @@
 #include "core/Nodes/NodeIf.cpp"
 #include "core/Nodes/NodeWhile.cpp"
 #include "core/Nodes/NodeFor.cpp"
+#include "core/Nodes/NodeForEach.cpp"
 #include "core/Nodes/NodeBreak.cpp"
 #include "core/Nodes/NodeContinue.cpp"
 #include "core/Nodes/NodeArray.cpp"
@@ -83,6 +84,7 @@ struct CodeGenUnit {
     bool inFn = false;                 // СЌРјРёСЃСЃРёСЏ С‚РµР»Р° С„СѓРЅРєС†РёРё
     bool curReturnsRef = false;        // С‚РµРєСѓС‰Р°СЏ С„СѓРЅРєС†РёСЏ РёРјРµРµС‚ `-> ref T`
     int lambdaSeq = 0;
+    int foreachSeq = 0;                // счётчик уникальных имён внутренних переменных for-each
     int capSeq = 0;                  // СЃС‡С‘С‚С‡РёРє СѓРЅРёРєР°Р»СЊРЅС‹С… РёРјС‘РЅ СЃРЅРёРјРєРѕРІ-Р·Р°С…РІР°С‚РѕРІ Р·Р°РјС‹РєР°РЅРёР№
     std::map<String, int> fnCounts;    // СЃС‡С‘С‚С‡РёРє РїРµСЂРµРіСЂСѓР·РѕРє РїРѕ РєР»СЋС‡Сѓ (СЃРІРѕР±РѕРґРЅС‹Рµ С„СѓРЅРєС†РёРё)
     std::map<String, int> methodSeq;   // СЃС‡С‘С‚С‡РёРє РїРµСЂРµРіСЂСѓР·РѕРє РјРµС‚РѕРґРѕРІ: "<Struct>::<РёРјСЏ>" -> idx
@@ -228,23 +230,26 @@ struct CodeGenUnit {
         if (isParam(v->name)) return "rt::refcell_ptr(" + v->name + ")";
         return "rt::refcell_ptr(" + envVar() + ".get(" + quote(v->name) + "))";
     }
+    // Путь полей obj.a.b -> базовое выражение-ячейка + список имён. "" если не путь.
+    String memberPathBase(Node* src, std::vector<String>& path) {
+        while (src && src->type == NodeTypes::NodeMemberAccess) {
+            auto* ma = static_cast<struct NodeMemberAccess*>(src);
+            Node* rr = ma->r_node;
+            while (rr && rr->type == NodeTypes::NodeScope)
+                rr = static_cast<struct NodeScope*>(rr)->node;
+            if (!rr || rr->type != NodeTypes::NodeVariable) return String();
+            path.insert(path.begin(), static_cast<struct NodeVariable*>(rr)->name);
+            src = ma->l_node;
+        }
+        return refSourceBase(src);
+    }
     String refSourceAlias(Node* src) {
         while (src && src->type == NodeTypes::NodeScope)
             src = static_cast<struct NodeScope*>(src)->node;
         if (!src) return String();
         if (src->type == NodeTypes::NodeMemberAccess) {
             std::vector<String> path;
-            Node* cur = src;
-            while (cur && cur->type == NodeTypes::NodeMemberAccess) {
-                auto* ma = static_cast<struct NodeMemberAccess*>(cur);
-                Node* rr = ma->r_node;
-                while (rr && rr->type == NodeTypes::NodeScope)
-                    rr = static_cast<struct NodeScope*>(rr)->node;
-                if (!rr || rr->type != NodeTypes::NodeVariable) return String();
-                path.insert(path.begin(), static_cast<struct NodeVariable*>(rr)->name);
-                cur = ma->l_node;
-            }
-            String base = refSourceBase(cur);
+            String base = memberPathBase(src, path);
             if (base.empty() || path.empty()) return String();
             String list;
             for (auto& p : path) { if (!list.empty()) list += ", "; list += quote(p); }
@@ -257,6 +262,14 @@ struct CodeGenUnit {
                 String cell = refSourceCell(ab);
                 if (!cell.empty())
                     return "rt::refindex_cell(" + cell + ", " + emitExpr(aa->indices[0]) + ")";
+                // obj.a[i]: ячейка поля-контейнера + индекс (ref-возврат элемента)
+                std::vector<String> path;
+                String base = memberPathBase(ab, path);
+                if (!base.empty() && !path.empty()) {
+                    String list;
+                    for (auto& p : path) { if (!list.empty()) list += ", "; list += quote(p); }
+                    return "rt::refindex_path(" + base + ", {" + list + "}, " + emitExpr(aa->indices[0]) + ")";
+                }
             }
             return String();
         }        if (src->type == NodeTypes::NodeVariable) {
@@ -1521,6 +1534,53 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 s += "\n}";
                 return s;
             }
+            case NodeTypes::NodeForEach: {
+                auto* n = static_cast<struct NodeForEach*>(node);
+                String name = n->decl ? n->decl->name : String();
+                int id = foreachSeq++;
+                String cvar = "__fe" + String(std::to_string(id));
+                String hvar = "__ofh" + String(std::to_string(id));
+                String ivar = "__fei" + String(std::to_string(id));
+
+                // Ячейка-носитель контейнера (для ref-элементов и стабильного
+                // однократного вычисления источника). Если источник — переменная,
+                // берём её живую ячейку; иначе материализуем значение в локаль.
+                // `foreach_host` разворачивает `__of__` (обёртка-структура ->
+                // внутренний контейнер) и отдаёт ячейку-носитель результата.
+                String src_cell = refSourceCell(n->source);   // shared_ptr<Box> или ""
+                bool owns = src_cell.empty();
+                String container;                              // C++-выражение Box&
+                String s;
+                if (owns) {
+                    s += "rt::Box " + cvar + " = rt::derefval(" + emitExpr(n->source) + ");\n";
+                    s += "auto " + hvar + " = rt::foreach_host(" + envVar() + ", " + cvar + ");\n";
+                } else {
+                    s += "auto " + hvar + " = rt::foreach_host(" + envVar() + ", *" + src_cell + ");\n";
+                }
+                container = "*" + hvar;
+
+                String host_cell = hvar;
+
+                s += "for (size_t " + ivar + " = 0; " + ivar + " < (size_t)rt::num(rt::szof("
+                     + container + ")); ++" + ivar + ") { // цикл for-each";
+
+                String elem_bind;
+                if (n->by_ref) {
+                    // Живой алиас на элемент: ячейка-носитель контейнера + индекс.
+                    elem_bind = envVar() + ".define(" + quote(name) + ", rt::refindex_cell("
+                              + host_cell + ", rt::Box::i64((long long)" + ivar + ")));";
+                    refVars.push_back(name);
+                } else {
+                    elem_bind = envVar() + ".define(" + quote(name) + ", rt::index(rt::derefval("
+                              + container + "), rt::Box::i64((long long)" + ivar + ")));";
+                }
+                s += "\n" + elem_bind;
+                String body = emitStmt(n->body);
+                if (!body.empty()) { s += "\n"; s += body; }
+                if (n->by_ref) refVars.pop_back();
+                s += "\n}";
+                return s;
+            }
             case NodeTypes::NodeBreak:
                 return "break; // выход из цикла";
             case NodeTypes::NodeContinue:
@@ -1668,6 +1728,7 @@ case NodeTypes::NodeStructDeclaration:
             case NodeTypes::NodeIf: return "If";
             case NodeTypes::NodeWhile: return "While";
             case NodeTypes::NodeFor: return "For";
+            case NodeTypes::NodeForEach: return "ForEach";
             case NodeTypes::NodeBreak: return "Break";
             case NodeTypes::NodeContinue: return "Continue";
             case NodeTypes::NodeReturn: return "Return";

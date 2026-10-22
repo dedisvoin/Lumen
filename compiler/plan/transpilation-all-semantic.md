@@ -258,7 +258,7 @@ registerStruct("Point", {
 | `Point::origin()` (static) | статик-таблица, `self` нет |
 | `const fn is_origin(self)` | const-ресивер: запись в поля внутри → `CONST_FN_MUTATION` (анализ) |
 | `struct[FirstT, SecondT] Duo { … }` (дженерик) | структура регистрируется один раз; generic-аргументы — метаданные типа (для `typeof`/проверок), **мономорфизация не нужна** |
-| `static fn of[A,B]` | обычная функция в статик-таблице; возвращает `structLit("Duo", …, generics={A,B})` |
+| `static fn pair[A,B]` | обычная функция в статик-таблице; возвращает `structLit("Duo", …, generics={A,B})` |
 | `new Duo[i64, str] {…}` | `makeNew` + struct-литерал; доступ `pduo.second` → auto-deref `get_member` |
 | приватные поля `private let …` | проверка на уровне анализа; в рантайме writable, но наружу анализ не пустит |
 
@@ -521,7 +521,7 @@ out.exe                                     # сверяем с коммента
   (prefixed defines), `NodeBinaryAssignment` + lhs `NodeMemberAccess` → `rt::putf`. Лямбды, Func и
   рекурсия (M3) продолжают работать, т.к. instance-методы нативные C++ (`Ctx` по значению).
   Валидировано `probe_cg_m4.lm` → `out_m4.exe`: 10 строк (Point/translate/is_origin/origin,
-  Duo::of/new, Color, Auth); регрессия `all_semantic.lm` — 0 ошибок, полная эмиссия собирается
+  Duo::pair/new, Color, Auth); регрессия `all_semantic.lm` — 0 ошибок, полная эмиссия собирается
   и работает. Приёмка: «структуры», «enum», «namespace».
 - **M5 — ref и дюндеры. ✓ СДЕЛАНО.** `RPath`, ref-алиас/параметр/возврат,
   операторные дюндеры (`__add__`/`__eq__`/`__sizeof__` dispatch), `typeof/sizeof/as`,

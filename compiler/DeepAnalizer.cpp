@@ -1586,6 +1586,61 @@ struct ASTDeepAnalyzer {
         return sit != structs.end() && sit->second.methods.find(dname) != sit->second.methods.end();
     }
 
+    // Возвращает ли `__of__` типа t результат по ref (`-> ref <контейнер>`).
+    // Значение-возврат делает `for (ref let x; of t;)` бессмысленным: правка
+    // пошла бы во временную копию.
+    bool ofDunderReturnsRef(const Type& t) {
+        if (!t.isStruct()) return false;
+        auto sit = structs.find(t.name);
+        if (sit == structs.end()) return false;
+        auto mit = sit->second.methods.find(String(U"__of__"));
+        if (mit == sit->second.methods.end() || mit->second.functions.empty()) return false;
+        return mit->second.functions[0].returns_ref;
+    }
+
+    // Имя поля, которое возвращает `__of__` в канонической форме `ret self.<field>;`.
+    // Нужно для `for (ref let x; of <обёртка>)`: живой алиас элемента должен
+    // адресовать `<обёртка>.<field>[idx]`, а не саму структуру. "" если форма иная.
+    String ofDunderField(const Type& t) {
+        if (!t.isStruct()) return String();
+        auto sit = structs.find(t.name);
+        if (sit == structs.end()) return String();
+        auto mit = sit->second.methods.find(String(U"__of__"));
+        if (mit == sit->second.methods.end() || mit->second.functions.empty()) return String();
+        Node* body = mit->second.functions[0].body;
+        auto unwrapScope = [](Node* x) -> Node* {
+            while (x && x->type == NodeTypes::NodeScope)
+                x = static_cast<struct NodeScope*>(x)->node;
+            return x;
+        };
+        // Тело может содержать подготовительные операторы (например, `__of__`
+        // лениво заполняет `self._box` перед возвратом), поэтому ищем
+        // `ret self.<field>;` по всем операторам верхнего уровня, а не только
+        // в однострочном теле.
+        auto fieldOfRet = [&](Node* st, String& out) -> bool {
+            st = unwrapScope(st);
+            if (!st || st->type != NodeTypes::NodeReturn) return false;
+            Node* e = unwrapScope(static_cast<struct NodeReturn*>(st)->expr);
+            if (!e || e->type != NodeTypes::NodeMemberAccess) return false;
+            Node* r = static_cast<struct NodeMemberAccess*>(e)->r_node;
+            while (r && r->type == NodeTypes::NodeScope)
+                r = static_cast<struct NodeScope*>(r)->node;
+            if (!r || r->type != NodeTypes::NodeVariable) return false;
+            out = static_cast<struct NodeVariable*>(r)->name;
+            return true;
+        };
+        body = unwrapScope(body);
+        if (!body) return String();
+        String f;
+        if (body->type == NodeTypes::NodeStatementsScope) {
+            for (Node* st : static_cast<struct NodeStatementsScope*>(body)->nodes)
+                if (fieldOfRet(st, f)) return f;
+            return String();
+        }
+        if (fieldOfRet(body, f)) return f;
+        return String();
+    }
+
     // __get__: автораспаковка значения при чтении переменной (NodeVariable).
     // Если значение — объект структуры с методом __get__, вызываем его
     // (self = объект) и повторяем разворот (вложенные обёртки) с защитой
@@ -2056,6 +2111,36 @@ struct ASTDeepAnalyzer {
         }
         out = cur;
         return true;
+    }
+
+    // Печать значения с учётом «живых» ref-элементов внутри контейнеров.
+    // Кортеж/массив может хранить алиасы (`{a_ref, b_ref}`) в RuntimeArray::refs;
+    // formatValue берёт снимок values, поэтому `echo t` показывал старое значение.
+    // Здесь для индексированных алиасов подставляем актуальное значение цели.
+    String formatLive(const Value& v, Context& ctx) {
+        if (!(v.T.isArray() || v.T.isTuple())) return formatValue(v);
+        const RuntimeArray& arr = v.get<RuntimeArray>();
+        String s = v.T.isArray() ? "{" : "[";
+        for (size_t i = 0; i < arr.view().size(); ++i) {
+            if (i) s += ", ";
+            auto ait = arr.refs.find(i);
+            if (ait != arr.refs.end() && ait->second.first) {
+                Node* an = ait->second.first;
+                Context* actx = ait->second.second ? ait->second.second : &ctx;
+                if (++ref_chain_depth > REF_CHAIN_LIMIT) {
+                    --ref_chain_depth;
+                    s += formatValue(arr.view()[i]);
+                    continue;
+                }
+                Value rv = execute(an, *actx);
+                --ref_chain_depth;
+                s += formatLive(rv, *actx);
+            } else {
+                s += formatLive(arr.view()[i], ctx);
+            }
+        }
+        s += v.T.isArray() ? "}" : "]";
+        return s;
     }
 
     // assignIndexElement replaced by flattened index handling in NodeBinaryAssignment LHS branch
@@ -2964,7 +3049,7 @@ ContextObject::Modifiers saved_mods = active_mods;
                         error_container.addError(DEEP_ERRORS::REF_NEEDS_INIT(var_decl->name_token, var_decl->name));
                         break;
                     }
-if (!isAssignablePath(var_decl->value_node, context)) {
+                if (!isAssignablePath(var_decl->value_node, context)) {
                     // const-корректность: ссылка на const-ячейку допустима, только
                     // если сама ссылка объявлена `const` (`const ref let b = a;`).
                     // Иначе запись через ref обошла бы неизменяемость источника.
@@ -4142,7 +4227,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                     size_t errors_before = error_container.errors.size();
                     Value result = execute(echo_node->expr, context);
                     bool failed = error_container.errors.size() != errors_before;
-                    String str = failed ? String() : formatValue(result);
+                    String str = failed ? String() : formatLive(result, context);
                     if (!str.empty()) {
                         int hl = echo_node->end.position.line;
                         int hc = echo_node->end.position.index + echo_node->end.position.size;
@@ -5075,6 +5160,135 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     if (control_flow == ControlFlow::Continue_) { control_flow = ControlFlow::None; /* РїР°РґР°РµРј РІ update */ }
                     if (control_flow == ControlFlow::Return_)   { break; }
                     if (f->update) execute(f->update, loop_ctx);
+                }
+                loop_depth--;
+                if (loop_depth == 0 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }
+                break;
+            }
+
+            case NodeTypes::NodeForEach: {
+                auto* fe = static_cast<struct NodeForEach*>(node);
+                if (symbols_only && !in_eval) break;   // LSP: тела циклов не прокручиваем
+                if (!fe->decl) break;
+
+                // Источник итерирования: массив/кортеж или строка. Значение берём
+                // один раз (как и кодоген: контейнер вычисляется до цикла).
+                Value src = fe->source ? execute(fe->source, context) : new_null();
+
+                // Обёртка-структура с `__of__(ref self) -> ref <контейнер>`: цикл
+                // идёт по внутреннему контейнеру, который возвращает `__of__`.
+                String of_field = String();
+                bool is_of_wrapper = false;
+                Type src_wrapper_type = src.T;
+                if (src.T.isStruct() && structHasDunder(src.T, String(U"__of__"))) {
+                    Value unwrapped = new_null();
+                    if (tryDunder(String(U"__of__"), src, {}, context, fe->of_token, fe->of_token, unwrapped)) {
+                        of_field = ofDunderField(src.T);
+                        is_of_wrapper = true;
+                        src = unwrapped;
+                    }
+                }
+
+                size_t count = 0;
+                bool is_str = false;
+                if (src.T.isArray() || src.T.isTuple()) {
+                    count = src.get<RuntimeArray>().size();
+                } else if (src.T == Ty::Str) {
+                    is_str = true;
+                    count = src.get<String>().size();
+                } else {
+                    error_container.addError(DEEP_ERRORS::CANNOT_INDEX(fe->of_token, src.T.toString()));
+                    break;
+                }
+
+                // `ref let x; of <источник>` требует адресуемого l-value и
+                // контейнера, для которого живой алиас на элемент возможен
+                // (массив/кортеж). Строка и rvalue — ошибка.
+                if (fe->by_ref) {
+                    Node* srcNode = fe->source;
+                    while (srcNode && srcNode->type == NodeTypes::NodeScope)
+                        srcNode = static_cast<struct NodeScope*>(srcNode)->node;
+                    bool callLvalue = srcNode && srcNode->type == NodeTypes::NodeFunctionCall;
+                    if (!isAssignablePath(fe->source, context) && !callLvalue) {
+                        error_container.addError(SEMANTIC_ERRORS::REF_BAD_TARGET(
+                            fe->decl->name_token, fe->decl->name));
+                        break;
+                    }
+                    if (is_str) {
+                        error_container.addError(SEMANTIC_ERRORS::REF_BAD_TARGET(
+                            fe->decl->name_token, fe->decl->name));
+                        break;
+                    }
+                    // `__of__`, возвращающий контейнер по значению, для `ref`-цикла
+                    // бесполезен: правка ушла бы во временную копию.
+                    if (is_of_wrapper && !ofDunderReturnsRef(src_wrapper_type)) {
+                        error_container.addError(SEMANTIC_ERRORS::REF_BAD_TARGET(
+                            fe->decl->name_token, fe->decl->name));
+                        break;
+                    }
+                }
+
+                auto loop_ctx_own = std::make_unique<Context>(ContextType::FunctionT);
+                Context& loop_ctx = *loop_ctx_own;
+                ctx_pool.push_back(std::move(loop_ctx_own));
+                loop_ctx.parent = &context;
+
+                loop_depth++;
+                if (loop_depth == 1 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }
+                for (size_t idx = 0; idx < count; ++idx) {
+                    if (budget_exhausted) break;
+                    if (--iter_budget < 0) {
+                        budget_exhausted = true;
+                        any_budget_hit = true;
+                        if (in_eval) error_container.addError(DEEP_ERRORS::EVAL_BUDGET_EXCEEDED(fe->token));
+                        else error_container.addError(DEEP_ERRORS::LOOP_NOT_TERMINATING(fe->token));
+                        break;
+                    }
+                    if (control_flow != ControlFlow::None) break;
+
+                    Value elem = new_null();
+                    if (is_str) elem = new_char(src.get<String>()[idx]);
+                    else {
+                        const RuntimeArray& arr = src.get<RuntimeArray>();
+                        auto ait = arr.refs.find(idx);
+                        if (ait != arr.refs.end()) {
+                            Node* an = ait->second.first;
+                            Context* actx = ait->second.second ? ait->second.second : &context;
+                            elem = execute(an, *actx);
+                        } else {
+                            elem = arr.view()[idx];
+                        }
+                    }
+
+                    auto iter_ctx_own = std::make_unique<Context>(ContextType::FunctionT);
+                    Context& iter_ctx = *iter_ctx_own;
+                    ctx_pool.push_back(std::move(iter_ctx_own));
+                    iter_ctx.parent = &loop_ctx;
+
+                    ContextObject co(fe->decl->name, elem);
+                    co.modifiers.Ref = fe->by_ref;
+                    if (fe->by_ref) {
+                        // Живой алиас на элемент: чтение/запись переадресуются
+                        // синтетическому узлу доступа `<контейнер>[idx]`, как в
+                        // `ref let x = arr[i];`. Для обёртки с `__of__` базой служит
+                        // поле-контейнер (`<обёртка>.<field>`), а не сама структура.
+                        Node* alias_base = fe->source;
+                        if (is_of_wrapper && !of_field.empty()) {
+                            auto* fieldv = new struct NodeVariable(of_field);
+                            alias_base = new struct NodeMemberAccess(fe->source, fieldv, fe->token);
+                        }
+                        Node* idx_node = new struct NodeNumber(static_cast<int32_t>(idx));
+                        std::vector<Node*> ix{idx_node};
+                        Node* acc = new struct NodeArrayAccess(alias_base, ix, fe->token);
+                        co.ref_alias_node = acc;
+                        co.ref_alias_ctx = &context;
+                    }
+                    iter_ctx.add_variable(fe->decl->name, co);
+
+                    execute(fe->body, iter_ctx);
+                    if (control_flow == ControlFlow::Break_)    { control_flow = ControlFlow::None; break; }
+                    if (control_flow == ControlFlow::Continue_) { control_flow = ControlFlow::None; }
+                    if (control_flow == ControlFlow::Return_)   { break; }
                 }
                 loop_depth--;
                 if (loop_depth == 0 && !eval_budget_shared) { iter_budget = 10000; budget_exhausted = false; }

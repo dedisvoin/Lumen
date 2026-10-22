@@ -250,7 +250,8 @@ static inline Box* refi_cell(const Box& v) {
     if (v.t != Box::T_REFI || !v.host) return nullptr;
     Box* h = v.host.get();
     if (!h) return nullptr;
-    if (v.refi < 0) {
+    Box* base = h;
+    if (!v.s.empty()) {
         std::vector<std::string> path;
         std::string cur;
         for (char ch : v.s) {
@@ -258,11 +259,13 @@ static inline Box* refi_cell(const Box& v) {
         }
         if (!cur.empty()) path.push_back(cur);
         if (path.empty()) return nullptr;
-        return fieldpath(*h, path);
-    }
-    if (h->t != Box::T_ARR && h->t != Box::T_TUP) return nullptr;
-    if (v.refi >= (long long)h->items.size()) return nullptr;
-    return &h->items[(size_t)v.refi];
+        base = fieldpath(*h, path);
+        if (!base) return nullptr;
+        if (v.refi < 0) return base;   // ячейка поля
+    } else if (v.refi < 0) return nullptr;
+    if (base->t != Box::T_ARR && base->t != Box::T_TUP) return nullptr;
+    if (v.refi >= (long long)base->items.size()) return nullptr;
+    return &base->items[(size_t)v.refi];
 }
 // Полное разворачивание ссылок к ячейке-цели (цепочка ref->ref->…->цель, без копий).
 // Нужно для ref-возвратов и рефов на переменные-рефы: `v = Vec::New()` держит реф
@@ -1423,7 +1426,21 @@ static inline Box setref_dispatch(Ctx& ctx, Box& slot, Box val) {
     if (slot.t == Box::T_REF && slot.sp) return assign_dispatch(ctx, *slot.sp, std::move(val));
     if (slot.t == Box::T_REFI) {
         Box* c = refi_cell(slot);
-        if (c) return assign_dispatch(ctx, *c, std::move(val));
+        if (c) {
+            // Элемент контейнера сам может быть ссылкой (`ref let p` по кортежу/
+            // массиву из ссылок: `!{r1, r2}`). Тогда писать надо СКВОЗЬ неё —
+            // иначе мы затрём саму ссылку значением (как раньше). Разматываем
+            // цепочку ref-of-ref, ограничивая глубину.
+            Box* t = c;
+            for (int g = 0; g < 64 && t; ++g) {
+                if (t->t == Box::T_REF && t->sp) { t = t->sp.get(); continue; }
+                if (t->t == Box::T_REFI) { t = refi_cell(*t); continue; }
+                break;
+            }
+            if (t) return assign_dispatch(ctx, *t, std::move(val));
+            // размотать не удалось — пишем в элемент как есть
+            return assign_dispatch(ctx, *c, std::move(val));
+        }
     }
     return assign_dispatch(ctx, slot, std::move(val));
 }
@@ -1448,6 +1465,52 @@ static inline Box refindex_cell(const std::shared_ptr<Box>& host_cell, Box idx) 
     if (i < 0 || i >= (long long)h.items.size()) return Box::null();
     Box v; v.t = Box::T_REFI; v.host = host_cell; v.refi = i;
     return v;
+}
+// ref на элемент поля-контейнера: obj.a[i] -> T_REFI(host, путь поля в s, индекс в refi).
+// Путь и индекс резолвятся заново при каждом доступе (fieldpath + items), поэтому
+// алиас живёт, пока жив хозяин, и переживает переприсваивание контейнера.
+static inline Box refindex_path(Box& root, const std::vector<std::string>& path, Box idx) {
+    if (path.empty() || !is_int_t(idx)) return Box::null();
+    std::string joined;
+    for (auto& p : path) { if (!joined.empty()) joined += '\x1f'; joined += p; }
+    Box v; v.t = Box::T_REFI;
+    v.host = std::shared_ptr<Box>(&root, [](Box*){});
+    v.s = joined; v.refi = inum(idx);
+    return v;
+}
+
+// Источник итерирования для for-each: если контейнер — структура с дюндером
+// __of__, вызываем его (self = контейнер) и берём ячейку-носитель результата —
+// так `for (ref let x; of wrapped;)` меняет сами элементы обёртки. Для массивов/
+// кортежей/строк — просто ячейка исходного контейнера (no-op). `stored` — ячейка
+// значения-источника; для owned-результата __of__ она переиспользуется как носитель.
+static inline std::shared_ptr<Box> foreach_host(Ctx& ctx, Box& stored) {
+    if (stored.t == Box::T_STRUCT && !stored.tname.empty()) {
+        Box out;
+        // self передаём ЖИВОЙ ССЫЛКОЙ на ячейку-источник, чтобы `__of__(ref self)`
+        // вернул алиас на настоящее поле, а не на копию аргумента.
+        std::shared_ptr<Box> selfc = refcell_ptr(stored);
+        if (dunder_try(ctx, stored.tname, "__of__", {Box::rref(selfc)}, out)) {
+            if (out.t == Box::T_REF && out.sp) return out.sp;         // живой ref на поле
+            if (out.t == Box::T_REFI) {
+                Box* c = refi_cell(out);
+                if (c) return std::shared_ptr<Box>(c, [](Box*) {});
+            }
+            // __of__ вернул контейнер ПО ЗНАЧЕНИЮ: материализуем в НОВУЮ ячейку-
+            // носитель, не трогая исходную структуру (`stored` — это сам объект-
+            // источник; запись в него превратила бы struct в массив). Носитель жив,
+            // пока жив возвращённый shared_ptr.
+            auto hold = std::make_shared<Box>(deref(out));
+            return hold;
+        }
+    }
+    return refcell_ptr(stored);
+}
+
+// Размер для for-each с учётом __of__: len(__of__(container)).
+static inline Box foreach_size(Ctx& ctx, Box& stored) {
+    std::shared_ptr<Box> h = foreach_host(ctx, stored);
+    return szof_dispatch(ctx, *h);
 }
 
 } // namespace rt

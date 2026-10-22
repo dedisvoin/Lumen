@@ -11,6 +11,7 @@
 #include "core/Nodes/NodeIf.cpp"
 #include "core/Nodes/NodeWhile.cpp"
 #include "core/Nodes/NodeFor.cpp"
+#include "core/Nodes/NodeForEach.cpp"
 #include "core/Nodes/NodeBreak.cpp"
 #include "core/Nodes/NodeContinue.cpp"
 #include "core/Nodes/NodeReturn.cpp"
@@ -1701,6 +1702,103 @@ struct ASTGenerator final {
         return new struct NodePtr(addr, type, kw);
     }
 
+    // for-each: `for (<decl>; of <expr>;) { ... }`, где <decl> — `let x` / `let x: T`
+    // / `ref let x` / `ref let x: T`. Форма распознаётся превентивно: первый ';' на
+    // глубине круглых скобок 0, сразу за которым идёт ключевое слово 'of'.
+    bool isForEachHeader() {
+        int depth = 0;
+        for (size_t i = walker.index; i < walker.tokens.size(); i++) {
+            const Token& t = walker.tokens[i];
+            if (t.type == TokenTypes::BRACE_LEFT || t.type == TokenTypes::BRACE_LEFT_RECT)
+                depth++;
+            else if (t.type == TokenTypes::BRACE_RIGHT || t.type == TokenTypes::BRACE_RIGHT_RECT) {
+                if (depth == 0) return false;   // закрылась ')' до 'of' — это C-цикл
+                depth--;
+            } else if (t.type == TokenTypes::OPERATOR && t.value == ";" && depth == 0) {
+                return (i + 1 < walker.tokens.size())
+                    && walker.tokens[i + 1].type == TokenTypes::KEYWORD
+                    && walker.tokens[i + 1].value == "of";
+            } else if (t.type == TokenTypes::BRACE_LEFT_CURVE && depth == 0) {
+                return false;                    // тело цикла началось — C-цикл
+            }
+        }
+        return false;
+    }
+
+    // Разбор <decl> в заголовке for-each. Не требует завершающего ';' и допускает
+    // тип без значения (`let x: T`). Возвращает NodeVariableDeclaration.
+    Node* parseForEachDecl(bool& by_ref) {
+        by_ref = false;
+        if (walker.CheckType(TokenTypes::KEYWORD) && walker.safeGet().value == "ref") {
+            by_ref = true;
+            walker.Next(); // 'ref'
+        }
+        if (!walker.Check(TokenTypes::KEYWORD, "let")) {
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), "let"));
+            return nullptr;
+        }
+        walker.Next(); // 'let'
+
+        if (!walker.CheckType(TokenTypes::LITERAL)) {
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), "variable name"));
+            return nullptr;
+        }
+        String name = walker.safeGet().value;
+        Token nameTok = walker.safeGet();
+        walker.Next();
+
+        Node* type_node = nullptr;
+        if (walker.Check(TokenTypes::OPERATOR, ":")) {
+            walker.Next();
+            type_node = parseExpression();
+            if (!type_node)
+                reportError(SYNTAX_ERRORS::WAITING_TYPE_EXPRESSION(walker.safeGet()));
+        }
+
+        return new struct NodeVariableDeclaration(name, nullptr, type_node, nameTok);
+    }
+
+    Node* parseForEach(Token kw) {
+        // walker уже после '('. Заголовок: <decl> ';' 'of' <expr> ';' ')'
+        bool by_ref = false;
+        Node* decl = parseForEachDecl(by_ref);
+        if (!decl) {
+            walker.passStatement();
+            return nullptr;
+        }
+        if (!walker.Check(TokenTypes::OPERATOR, ";"))
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), ";"));
+        else
+            walker.Next();
+
+        Token ofTok = walker.safeGet();
+        if (!walker.Check(TokenTypes::KEYWORD, "of"))
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), "of"));
+        else
+            walker.Next();
+
+        Node* source = parseExpression();
+        if (!source)
+            reportError(SYNTAX_ERRORS::EXPECTED_EXPRESSION(walker.safeGet()));
+
+        if (!walker.Check(TokenTypes::OPERATOR, ";"))
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), ";"));
+        else
+            walker.Next();
+
+        if (!walker.CheckType(TokenTypes::BRACE_RIGHT))
+            reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), ")"));
+        else
+            walker.Next();
+
+        Node* body = nullptr;
+        loop_depth++;
+        body = parseStatement();
+        loop_depth--;
+        return new struct NodeForEach(static_cast<struct NodeVariableDeclaration*>(decl),
+                                      source, body, by_ref, kw, ofTok);
+    }
+
     Node* parseFor() {
         Token kw = walker.safeGet(); // токен 'for'
         walker.Next(); // съедаем for
@@ -1708,6 +1806,9 @@ struct ASTGenerator final {
             reportError(SYNTAX_ERRORS::WAITING(walker.safeGet(), "("));
         else
             walker.Next();
+
+        if (isForEachHeader())
+            return parseForEach(kw);
 
         Node* init = parseStatement();
         if (!init)
@@ -2299,6 +2400,16 @@ void printNode(Node* node, int level, const std::vector<bool>& levelsStatus, boo
                 std::cout << Style("[nullptr]", TerminalStyle::DIM_WHITE) << "\n";
             }
             idx++;
+            printNode(n->body, level + 1, newStatus, true);
+            return;
+        }
+        case NodeTypes::NodeForEach: {
+            auto n = static_cast<struct NodeForEach*>(node);
+            std::cout << Style("NodeForEach" + String(n->by_ref ? " (ref)" : ""), TerminalStyle::MAGENTA) << "\n";
+            std::vector<bool> newStatus = levelsStatus;
+            newStatus.push_back(isCurrentLast);
+            printNode(n->decl, level + 1, newStatus, false);
+            printNode(n->source, level + 1, newStatus, false);
             printNode(n->body, level + 1, newStatus, true);
             return;
         }
