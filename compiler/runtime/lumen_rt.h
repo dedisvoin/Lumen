@@ -1312,7 +1312,11 @@ static inline Box typeof_dispatch(Ctx& ctx, Box v) {
     }
     if (v.t == Box::T_TYPE) {
         if (v.s == "StructType") return Box::struct_type("StructType");
-        return Box::struct_type("StructType");
+        // struct type name stored as T_TYPE? treat as struct type value
+        // but we now prefer T_STRUCTTYPE; keep backward compat
+        // check if it's a known struct name? not directly available; 
+        // for our new scheme, struct type values come as T_STRUCTTYPE
+        return Box::typ(v.s);
     }
     if (v.t == Box::T_STRUCT) {
         Box out;

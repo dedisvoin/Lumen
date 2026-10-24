@@ -24,6 +24,12 @@
 
 // «Статическое значение» = тип + свойства места. Значения (конкретные
 // константы, куча, ref) на этом этапе не моделируются.
+static bool isTypeValue(const Type& t) {
+    if (t == Ty::Type_) return true;
+    if (t.type == TypeType::BASE && (t.name == "Type" || t.name == "StructType")) return true;
+    return false;
+}
+
 struct StaticValue {
     Type type      = Ty::Any;   // выведенный тип
     bool is_const  = false;     // известно ли значение на этапе компиляции
@@ -248,9 +254,10 @@ struct TypeAnalyzer {
             String nm = static_cast<struct NodeVariable*>(t)->name;
             Type out = Ty::Any;
             if (builtinType(nm, out)) return out;
-            if (nm == "auto" || nm == "any") return Ty::Any;
-            if (struct_syms.count(nm)) return Type::StructType(nm);
-            return Ty::Any;
+        if (nm == "auto" || nm == "any") return Ty::Any;
+        if (nm == "StructType") return Ty::Type_;
+        if (struct_syms.count(nm)) return Type::StructType(nm);
+        return Ty::Any;
         }
         // M9: составные типы — массив, кортеж, union, nullable (?T).
         if (t->type == NodeTypes::NodeArrayType) {
@@ -919,7 +926,11 @@ struct TypeAnalyzer {
                     // Массив с неизвестной длиной сворачивать нельзя (интерпретатор
                     // знает фактическую длину значения) — оставляем runtime-dispatch.
                     if (!arr_unknown_size) {
-                        String repr = st.toString();
+                        String repr;
+                        if (st.isStruct() && !st.name.empty()) repr = String("StructType");
+                        else if (st.type == TypeType::BASE && st.name == "StructType") repr = String("StructType");
+                        else if (st.type == TypeType::BASE && st.name == "Type") repr = String("Type");
+                        else repr = st.toString();
                         if (!t->has_static_type) {
                             t->static_type = repr;
                             t->has_static_type = true;
@@ -943,8 +954,8 @@ struct TypeAnalyzer {
                 Node* r = unwrapMod(sr->r_node);
                 if (r && r->type == NodeTypes::NodeVariable)
                     rname = static_cast<struct NodeVariable*>(r)->name;
-                if (l.type == Ty::Type_ && rname == "size") { sv.type = Ty::i64; return sv; }
-                if (l.type == Ty::Type_ && rname == "type") { sv.type = Ty::Type_; return sv; }
+                if (isTypeValue(l.type) && rname == "size") { sv.type = Ty::i64; return sv; }
+                if (isTypeValue(l.type) && rname == "type") { sv.type = Ty::Type_; return sv; }
                 sv.type = Ty::Any;
                 sv.dynamic = true;
                 return sv;
