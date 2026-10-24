@@ -736,11 +736,11 @@ struct ASTDeepAnalyzer {
     void initContext() {
         struct BV { const char* n; Type t; };
         const BV builtins[] = {
-            {"i8", Ty::i8}, {"i16", Ty::i16}, {"i32", Ty::i32},
-            {"i64", Ty::i64}, {"f16", Ty::f16}, {"f32", Ty::f32}, {"f64", Ty::f64},
-            {"bool", Ty::Bool}, {"char", Ty::Char}, {"str", Ty::Str},
-            {"any", Ty::Any}, {"auto", Ty::Auto}, {"Type", Ty::Type_},
-            {"Namespace", Ty::Namespace}, {"Null", Ty::Null},
+        {"i8", Ty::i8}, {"i16", Ty::i16}, {"i32", Ty::i32},
+        {"i64", Ty::i64}, {"f16", Ty::f16}, {"f32", Ty::f32}, {"f64", Ty::f64},
+        {"bool", Ty::Bool}, {"char", Ty::Char}, {"str", Ty::Str},
+        {"any", Ty::Any}, {"auto", Ty::Auto}, {"Type", Ty::Type_}, {"StructType", Ty::Type_},
+        {"Namespace", Ty::Namespace}, {"Null", Ty::Null},
         };
         for (auto& b : builtins) {
             ContextObject co(String(b.n), new_type(b.t), Ty::Type_);
@@ -1020,10 +1020,16 @@ struct ASTDeepAnalyzer {
             }
             ContextObject& obj = ctx.get_variable(nm);
             // тип как корень пути: `Vec::filled(1)`, `Types::a`, `Test::name`
-            if (obj.value.T == Ty::Type_ && obj.is_type_decl) {
-                Type tt = obj.value.get<Type>();
-                if (tt.isStruct() || tt.isEnum())
-                    return resolveTypeMember(tt, member_name, sr->member_token);
+            if (obj.value.T == Ty::Type_) {
+                try {
+                    Type tt = obj.value.get<Type>();
+                    if (tt.isStruct() || tt.isEnum())
+                        return resolveTypeMember(tt, member_name, sr->member_token);
+                    if (tt.type == TypeType::BASE && tt.name == "StructType") {
+                        // StructType is a kind; cannot resolve by stored struct name here without extra info
+                    }
+                } catch (...) {
+                }
             }
             if (obj.value.T != Ty::Namespace) {
                 error_container.addError(DEEP_ERRORS::SCOPE_RESOLUTION_NOT_NAMESPACE(sr->member_token, obj.value.T.toString()));
@@ -5343,10 +5349,15 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
 
             case NodeTypes::NodeTypeOf: {
                 auto* t = static_cast<struct NodeTypeOf*>(node);
+                Value result(Ty::Null, nullptr);
                 if (t->is_static) {
                     // typeis(...) — статический (объявленный) тип как Type-значение.
                     Type st = staticTypeOfExpr(t->expr, context);
-                    Value result = new_type(st);
+                    if (st.isStruct() && !st.name.empty()) {
+                        result = Value(Ty::Type_, Type(TypeType::BASE, String("StructType")));
+                    } else {
+                        result = new_type(st);
+                    }
                     if (st.isArray() && !st.container_1.empty()) {
                         t->static_type_elem = st.container_1[0].toString();
                         t->has_static_elem = true;
@@ -5364,7 +5375,22 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                 Value v = execute(t->expr, context);
                 std::vector<Value> empty_args;
                 Value dd(Ty::Null, nullptr);
-                Value result = new_type(v.T);
+                if (v.T == Ty::Type_ && v.value.has_value()) {
+                    try {
+                        Type tv = v.get<Type>();
+                        if (tv.isStruct() && !tv.name.empty()) {
+                            result = Value(Ty::Type_, Type(TypeType::BASE, String("StructType")));
+                        } else if (tv.type == TypeType::BASE && tv.name == "StructType") {
+                            result = Value(Ty::Type_, Type(TypeType::BASE, String("StructType")));
+                        } else {
+                            result = new_type(tv);
+                        }
+                    } catch (...) {
+                        result = new_type(v.T);
+                    }
+                } else {
+                    result = new_type(v.T);
+                }
                 if (v.T.isArray() && !v.T.container_1.empty()) {
                     t->static_type_elem = v.T.container_1[0].toString();
                     t->has_static_elem = true;

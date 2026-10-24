@@ -134,7 +134,7 @@ static inline double fromhalf(unsigned short h) {
 }
 
 struct Box {
-    enum Tag { T_NULL, T_i8, T_i16, T_i32, T_i64, T_f16, T_f32, T_f64, T_BOOL, T_CHAR, T_STR, T_ARR, T_TUP, T_FN, T_CLOSURE, T_TYPE, T_STRUCT, T_PTR, T_REF, T_REFI } t = T_NULL;
+    enum Tag { T_NULL, T_i8, T_i16, T_i32, T_i64, T_f16, T_f32, T_f64, T_BOOL, T_CHAR, T_STR, T_ARR, T_TUP, T_FN, T_CLOSURE, T_TYPE, T_STRUCTTYPE, T_STRUCT, T_PTR, T_REF, T_REFI } t = T_NULL;
     long long    i = 0;
     double       f = 0;
     bool         b = false;
@@ -185,6 +185,7 @@ struct Box {
     static Box fn(FnPtr x)      { Box v; v.t = T_FN;  v.fp = x; return v; }
     static Box clos(ClosFn f)   { Box v; v.t = T_CLOSURE; v.cl = std::make_shared<ClosFn>(std::move(f)); return v; }
     static Box typ(const std::string& tn) { Box v; v.t = T_TYPE; v.s = tn; return v; }
+    static Box struct_type(const std::string& tn) { Box v; v.t = T_STRUCTTYPE; v.s = tn; return v; }
     static Box strct(const std::string& name, std::map<std::string, Box> f,
                      std::map<std::string, std::string> fd = {}) {
         Box v; v.t = T_STRUCT; v.tname = name;
@@ -494,6 +495,7 @@ static inline std::string fmt(const Box& v) {
         case Box::T_REF: return v.sp ? fmt(*v.sp) : "ref-null";
         case Box::T_REFI: { Box* c = refi_cell(v); return c ? fmt(*c) : "ref-null"; }
         case Box::T_TYPE: return v.s;
+        case Box::T_STRUCTTYPE: return v.s.empty() ? "StructType" : v.s;
         case Box::T_CLOSURE: return "fn";
         default: {
             double d = num(v);
@@ -648,6 +650,13 @@ static inline bool truthy(const Box& v) {
 
 // Сравнение type-имён: юнионы ("i32 | f32") сравниваются как множества —
 // зеркало структурного сравнения Type в интерпретаторе (порядок не важен).
+static inline bool is_type_box(const Box& v) {
+    return v.t == Box::T_TYPE || v.t == Box::T_STRUCTTYPE;
+}
+static inline std::string type_box_name(const Box& v) {
+    if (v.t == Box::T_TYPE || v.t == Box::T_STRUCTTYPE) return v.s;
+    return "";
+}
 static inline bool type_name_eq(const std::string& a, const std::string& b) {
     if (a == b) return true;
     if (a.find(" | ") == std::string::npos && b.find(" | ") == std::string::npos)
@@ -687,6 +696,7 @@ static inline Box cmp(char op, Box l, Box r) {
                 case Box::T_CHAR: eq = (l.c == r.c); break;
                 case Box::T_STR:  eq = (l.s == r.s); break;
                 case Box::T_TYPE: eq = type_name_eq(l.s, r.s); break;
+                case Box::T_STRUCTTYPE: eq = type_name_eq(l.s, r.s); break;
 case Box::T_PTR:
                       // у &obj.field своя личность (refi), как у слота VirtualHeap:
                       // два независимых &s.age не равны, но копия одного указателя равна.
@@ -1026,6 +1036,35 @@ static inline bool dunder_try(Ctx& ctx, const std::string& ty, const std::string
         if (!f) return Box::null();
         return f(ctx, std::move(args));
     }
+    static std::map<std::string, std::map<std::string, std::vector<DunderEntry>>> g_static_methods;
+    static inline void reg_static_method(const std::string& ty, const std::string& name,
+                                         const std::vector<std::string>& tags, FnPtr fp) {
+        g_static_methods[ty][name].push_back({tags, fp});
+    }
+    static inline Box static_call(Ctx& ctx, const Box& owner, const std::string& name,
+                                  std::vector<Box> args) {
+        std::string ty;
+        if (owner.t == Box::T_TYPE || owner.t == Box::T_STRUCTTYPE) ty = owner.s;
+        else ty = tyname(owner);
+        auto it = g_static_methods.find(ty);
+        if (it == g_static_methods.end()) return Box::null();
+        auto m = it->second.find(name);
+        if (m == it->second.end()) return Box::null();
+        std::vector<Box> sel;
+        sel.reserve(args.size() + 1);
+        sel.push_back(owner);
+        sel.insert(sel.end(), args.begin(), args.end());
+        FnPtr f = dunder_select(ctx, m->second, sel);
+        if (!f) return Box::null();
+        return f(ctx, std::move(args));
+    }
+    static inline Box scope_field(Ctx& ctx, const Box& owner, const std::string& name) {
+        if (owner.t == Box::T_TYPE || owner.t == Box::T_STRUCTTYPE) {
+            if (const Box* v = ctx.find(owner.s + "::" + name)) return *v;
+            return Box::null();
+        }
+        return field(owner, name);
+    }
     static inline Box auto_get(Ctx& ctx, Box v) {
     int guard = 0;
     while (v.t == Box::T_STRUCT && !v.tname.empty() && guard++ < 64) {
@@ -1087,15 +1126,17 @@ static inline Box op_dispatch(char op, Ctx& ctx, Box l, Box r) {
         Box out;
         if (dunder_try(ctx, l.tname, d, {l, r}, out)) return out;
     }
-    if (op == '|' && l.t == Box::T_TYPE && r.t == Box::T_TYPE)
+    if (op == '|' && is_type_box(l) && is_type_box(r))
         return typunion(l, r);
-    if (op == '|' && l.t == Box::T_TYPE && r.t == Box::T_NULL)
+    if (op == '|' && is_type_box(l) && r.t == Box::T_NULL)
         return typunion(l, Box::typ("Null"));
-    if (op == '|' && l.t == Box::T_NULL && r.t == Box::T_TYPE)
+    if (op == '|' && l.t == Box::T_NULL && is_type_box(r))
         return typunion(Box::typ("Null"), r);
-    // << на типах: a << b — каждый элемент b содержится в a (b ⊆ a)
-    if (op == 'l' && l.t == Box::T_TYPE && r.t == Box::T_TYPE)
-        return Box::boo(typcontains(l.s, r.s));
+
+    if (op == 'l' && is_type_box(l) && is_type_box(r))
+        return Box::boo(typcontains(r.s, l.s) || (l.s == "StructType" && r.s == "Type") || (r.s == "StructType" && l.s == "StructType"));
+    if (op == 'r' && is_type_box(l) && is_type_box(r))
+        return Box::boo(typcontains(l.s, r.s) || (l.s == "StructType" && r.s == "Type"));
     // >> на типах: a >> b — каждый элемент a содержится в b (a ⊆ b)
     if (op == 'r' && l.t == Box::T_TYPE && r.t == Box::T_TYPE)
         return Box::boo(typcontains(r.s, l.s));
@@ -1141,6 +1182,7 @@ static inline std::string tyname(const Box& v) {
         case Box::T_FN:     return "fn";
         case Box::T_CLOSURE: return "fn";
         case Box::T_TYPE:   return "Type";
+        case Box::T_STRUCTTYPE: return "StructType";
         case Box::T_STRUCT: return v.tname.empty() ? "struct" : v.tname;
         case Box::T_PTR: {
             Box d = deref(v);
@@ -1167,6 +1209,7 @@ static inline Box field_decltype(const Box& box, const std::string& name) {
 // тип-значение (Box::typ / строка) -> имя типа
 static inline std::string typename_of(const Box& t) {
     if (t.t == Box::T_TYPE) return t.s;
+    if (t.t == Box::T_STRUCTTYPE) return t.s;
     if (t.t == Box::T_STR)  return t.s;
     return "";
 }
@@ -1174,7 +1217,10 @@ static inline std::string typename_of(const Box& t) {
 static inline Box typunion(const Box& a, const Box& b) {
     std::string na = typename_of(a);
     std::string nb = typename_of(b);
-    // собираем все имена из обоих юнионов
+    if ((na == "StructType" && !nb.empty()) || (nb == "StructType" && !na.empty())) {
+        // StructType <: Type in effect for unions
+    }
+    // �������� ������ ��� ������: ��������
     std::vector<std::string> parts;
     auto split_union = [&](const std::string& s) {
         size_t pos = 0;
@@ -1195,7 +1241,11 @@ static inline Box typunion(const Box& a, const Box& b) {
         if (!dup) unique.push_back(p);
     }
     if (unique.empty()) return Box::typ("Null");
-    if (unique.size() == 1) return Box::typ(unique[0]);
+    // If StructType appears together with Type/others, keep as union string; typeof checks by name
+    if (unique.size() == 1) {
+        if (unique[0] == "StructType") return Box::struct_type("StructType");
+        return Box::typ(unique[0]);
+    }
     std::string result = unique[0];
     for (size_t i = 1; i < unique.size(); ++i) result += " | " + unique[i];
     return Box::typ(result);
@@ -1245,6 +1295,11 @@ static inline Box cast_dispatch(Ctx& ctx, Box v, Box target) {
         if (dunder_try(ctx, v.tname, "__as__", {v, Box::typ(tn)}, out)) return out;
         return v;
     }
+    if (target.t == Box::T_STRUCTTYPE) {
+        if (v.t == Box::T_STRUCTTYPE && type_name_eq(v.s, tn)) return v;
+        if (v.t == Box::T_STRUCT && !v.tname.empty() && type_name_eq(v.tname, tn)) return Box::struct_type(v.tname);
+        return v;
+    }
     if (!tn.empty() && tyname(v) == tn) return v;
     if (cast_primitive_name(tn)) return cast(v, tn);
     return v;
@@ -1252,9 +1307,19 @@ static inline Box cast_dispatch(Ctx& ctx, Box v, Box target) {
 // typeof c диспетчеризацией __typeof__
 static inline Box typeof_dispatch(Ctx& ctx, Box v) {
     v = derefval(v);
+    if (v.t == Box::T_STRUCTTYPE) {
+        return Box::struct_type("StructType");
+    }
+    if (v.t == Box::T_TYPE) {
+        if (v.s == "StructType") return Box::struct_type("StructType");
+        return Box::struct_type("StructType");
+    }
     if (v.t == Box::T_STRUCT) {
         Box out;
         if (dunder_try(ctx, v.tname, "__typeof__", {v}, out)) return out;
+        // typeof отдаёт type-значение (T_TYPE, зеркало интерпретатора), чтобы
+        // `typeof(x) == i64` сравнивалось с типовым литералом, а не со строкой.
+        return Box::typ(tyname(v));
     }
     // typeof отдаёт type-значение (T_TYPE, зеркало интерпретатора), чтобы
     // `typeof(x) == i64` сравнивалось с типовым литералом, а не со строкой.

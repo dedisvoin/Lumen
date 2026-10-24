@@ -101,6 +101,7 @@ struct CodeGenUnit {
     // Регистрируются в g_methods, чтобы x.method() на типе-параметре функции
     // резолвился в рантайме по типу значения (см. recvNeedsDynCall).
     std::map<String, std::vector<DunderReg>> structMethods;
+    std::map<String, std::vector<DunderReg>> structStaticMethods;
 
     // РїРѕР»СЏ СЃС‚СЂСѓРєС‚СѓСЂС‹: РёРјСЏ СЃС‚СЂСѓРєС‚СѓСЂС‹ -> [(РёРјСЏ РїРѕР»СЏ, default_node)], РґР»СЏ РјР°С‚РµСЂРёР°Р»РёР·Р°С†РёРё
     // РґРµС„РѕР»С‚РѕРІ РІ Р»РёС‚РµСЂР°Р»Р°С… (Р·РµСЂРєР°Р»Рѕ DeepAnalizer::materializeStruct).
@@ -439,15 +440,16 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
         if (u->type == NodeTypes::NodeStructDeclaration) {
             auto* st = static_cast<struct NodeStructDeclaration*>(u);
             String full = nsPrefix.empty() ? st->name : nsPrefix + String("::") + st->name;
+            String s = envVar() + ".define(" + quote(full) + ", rt::Box::struct_type(" + quote(full) + "));\n";
             auto it = staticFields.find(full);
-            if (it == staticFields.end()) return String();
-            String s;
-            for (size_t i = 0; i < it->second.size(); ++i) {
-                String key = full + String("::") + it->second[i].first;
-                s += envVar() + ".define(" + quote(key) + ", "
-                   + (it->second[i].second ? emitExpr(it->second[i].second)
-                                           : String("rt::Box::null()"))
-                   + ");\n";
+            if (it != staticFields.end()) {
+                for (size_t i = 0; i < it->second.size(); ++i) {
+                    String key = full + String("::") + it->second[i].first;
+                    s += envVar() + ".define(" + quote(key) + ", "
+                       + (it->second[i].second ? emitExpr(it->second[i].second)
+                                               : String("rt::Box::null()"))
+                       + ");\n";
+                }
             }
             return s;
         }
@@ -604,7 +606,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 // в транспилере эмитятся как тип-значения (Box::typ).
                 static const char* builtinTypes[] = {
                     "i8","i16","i32","i64","f16","f32","f64","bool","char","str",
-                    "any","auto","Type","Null","Namespace"
+                    "any","auto","Type","StructType","Null","Namespace"
                 };
                 String uname = v->name;
                 for (const char* bt : builtinTypes)
@@ -934,7 +936,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 if (isStructStatic(key))
                     return envVar() + ".get(" + quote(key) + ")";
                 if (!rname.empty())
-                    return "rt::field(" + emitExpr(n->l_node) + ", " + quote(rname) + ")";
+                    return "rt::scope_field(" + envVar() + ", " + emitExpr(n->l_node) + ", " + quote(rname) + ")";
                 return "/* TBD scope res */ rt::Box::null()";
             }
             case NodeTypes::NodeStructLiteral: {
@@ -2175,7 +2177,12 @@ case NodeTypes::NodeStructDeclaration:
                 rname = static_cast<struct NodeVariable*>(r)->name;
             String key = lname + "::" + rname;
             FnSig* sig = resolveForCall(key, n->args, n);
-            if (!sig) return "";
+            if (!sig) {
+                if (rname.empty()) return "";
+                String args = argVectorText(n->args);
+                return "rt::static_call(" + envVar() + ", " + emitExpr(sr->l_node) + ", "
+                     + quote(rname) + ", std::vector<rt::Box>{" + args + "})";
+            }
             String args = argVectorText(n->args, sig->node);
             String gh = genericHiddenArgs(sig->node, n);
             String al = args.empty() ? gh : (gh.empty() ? args : args + ", " + gh);
@@ -2501,6 +2508,15 @@ case NodeTypes::NodeStructDeclaration:
                     auto* fn = static_cast<struct NodeFunctionDeclaration*>(m);
                     if (hasStaticMod(mod)) {
                         registerFn(fn, full, ns);
+                        auto& sigs = fnRegistry[full + "::" + fn->name];
+                        for (auto& sig : sigs) {
+                            if (sig.node != fn) continue;
+                            std::vector<String> tags;
+                            for (auto& p : fn->params)
+                                tags.push_back(mangledDunderTag(p, fn, st));
+                            structStaticMethods[full].push_back(DunderReg{fn->name, sig.cpp, tags});
+                            break;
+                        }
                     } else {
                         int idx = methodSeq[full + "::" + fn->name]++;
                         String suffix = idx ? "_" + String(std::to_string(idx)) : String("");
@@ -2689,11 +2705,12 @@ case NodeTypes::NodeStructDeclaration:
         for (const String& pm : curParms)
             s += "\n    " + envVar() + ".define(" + quote(pm) + ", " + pm + ");";
         String cap = "cap" + String(std::to_string(capSeq++));
-        s += "\n    rt::Ctx " + cap + " = " + envVar() + ";";
+        // Снимок владеет копиями всех кадров цепочки (root g_ctx заимствуется),
+        // поэтому замыкание переживает выход из объемлющих функций.
+        s += "\n    auto " + cap + " = rt::scope_snapshot(" + envVar() + ", {});";
         s += "\n    " + envVar() + ".define(" + quote(fn->name) + ", rt::Box::clos([" + cap
            + "](rt::Ctx, const std::vector<rt::Box>& args_) -> rt::Box {";
-        s += "\n        rt::Ctx ctx;";
-        s += "\n        ctx.parent = const_cast<rt::Ctx*>(&" + cap + ");";
+        s += "\n        rt::Ctx ctx(" + cap + ");";
         s += fnBody(fn, curNs);
         s += "\n        return rt::Box::null();\n    }));";
         return s;
@@ -2767,6 +2784,17 @@ for (auto& kv : fnRegistry)
                 }
                 tags += "}";
                 code += "    rt::reg_method(" + quote(sd.first) + ", " + quote(d.name)
+                      + ", " + tags + ", &" + d.cpp + ");\n";
+            }
+        for (auto& sd : structStaticMethods)
+            for (auto& d : sd.second) {
+                String tags = "std::vector<std::string>{";
+                for (size_t ti = 0; ti < d.tags.size(); ++ti) {
+                    if (ti) tags += ", ";
+                    tags += quote(d.tags[ti]);
+                }
+                tags += "}";
+                code += "    rt::reg_static_method(" + quote(sd.first) + ", " + quote(d.name)
                       + ", " + tags + ", &" + d.cpp + ");\n";
             }
         for (auto* node : tree) {

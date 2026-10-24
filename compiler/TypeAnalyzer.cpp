@@ -212,6 +212,7 @@ struct TypeAnalyzer {
         if (nm == "char") { out = Ty::Char; return true; }
         if (nm == "str")  { out = Ty::Str;  return true; }
         if (nm == "Type") { out = Ty::Type_; return true; }
+        if (nm == "StructType") { out = Ty::Type_; return true; }
         if (nm == "Null") { out = Ty::Null; return true; }
         if (nm == "any")  { out = Ty::Any;  return true; }
         if (nm == "auto") { out = Ty::Auto; return true; }

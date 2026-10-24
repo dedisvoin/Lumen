@@ -39,7 +39,5 @@ struct String {
     static fn __call__(_str: str) -> String  : {
         ret String{_str: _RafString::alloc(_str, sizeof(_str))};
     }
-    
-   
 }
 
