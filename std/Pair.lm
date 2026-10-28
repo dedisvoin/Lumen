@@ -1,4 +1,6 @@
 #include "std/Typing.lm"
+
+
 struct[FirstT, SecondT] Pair {
     let _box: Tuple[FirstT, SecondT] = !{};
 

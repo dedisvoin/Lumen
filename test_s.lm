@@ -1,6 +1,0 @@
-namespace N {
-    struct S {
-        static let x: i64 = 10;
-    }
-}
-echo N::S::x;

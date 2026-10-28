@@ -26,7 +26,13 @@
 // константы, куча, ref) на этом этапе не моделируются.
 static bool isTypeValue(const Type& t) {
     if (t == Ty::Type_) return true;
-    if (t.type == TypeType::BASE && (t.name == "Type" || t.name == "StructType")) return true;
+    if (t.type == TypeType::BASE && t.name == "StructType") return true;
+    if (t.type == TypeType::BASE && t.name == "TypeStruct") return true;
+    if (t.type == TypeType::BASE && t.name == "Type") return true;
+    if (t.isStruct() && !t.name.empty()) return true;
+    if (t.type == TypeType::ARRAY) return true;
+    if (t.type == TypeType::UNION) return true;
+    if (t.is_any) return true;
     return false;
 }
 
@@ -218,7 +224,8 @@ struct TypeAnalyzer {
         if (nm == "char") { out = Ty::Char; return true; }
         if (nm == "str")  { out = Ty::Str;  return true; }
         if (nm == "Type") { out = Ty::Type_; return true; }
-        if (nm == "StructType") { out = Ty::Type_; return true; }
+        if (nm == "TypeStruct") { out = Type(TypeType::BASE, "StructType"); return true; }
+        if (nm == "StructType") { out = Type(TypeType::BASE, "StructType"); return true; }
         if (nm == "Null") { out = Ty::Null; return true; }
         if (nm == "any")  { out = Ty::Any;  return true; }
         if (nm == "auto") { out = Ty::Auto; return true; }
@@ -926,11 +933,11 @@ struct TypeAnalyzer {
                     // Массив с неизвестной длиной сворачивать нельзя (интерпретатор
                     // знает фактическую длину значения) — оставляем runtime-dispatch.
                     if (!arr_unknown_size) {
-                        String repr;
-                        if (st.isStruct() && !st.name.empty()) repr = String("StructType");
-                        else if (st.type == TypeType::BASE && st.name == "StructType") repr = String("StructType");
-                        else if (st.type == TypeType::BASE && st.name == "Type") repr = String("Type");
-                        else repr = st.toString();
+                    String repr;
+                    if (st.isStruct() && !st.name.empty()) repr = String("StructType");
+                    else if (st.type == TypeType::BASE && st.name == "StructType") repr = String("StructType");
+                    else if (st.type == TypeType::BASE && st.name == "Type") repr = String("Type");
+                    else repr = st.toString();
                         if (!t->has_static_type) {
                             t->static_type = repr;
                             t->has_static_type = true;
@@ -1175,6 +1182,13 @@ struct TypeAnalyzer {
                         v.is_const = rhs.is_const;
                     }
                     v.nullable = rhs.nullable;
+                }
+                if (!d->type_node && d->value_node) {
+                    Node* vn = unwrapScope(d->value_node);
+                    if (vn && vn->type == NodeTypes::NodeVariable) {
+                        String nm = static_cast<struct NodeVariable*>(vn)->name;
+                        if (struct_syms.count(nm)) v.type = Type(TypeType::BASE, "StructType");
+                    }
                 }
                 if (v.type.is_auto) v.type = Ty::Any;
                 v.immutable = m_const;

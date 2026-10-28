@@ -606,7 +606,7 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 // в транспилере эмитятся как тип-значения (Box::typ).
                 static const char* builtinTypes[] = {
                     "i8","i16","i32","i64","f16","f32","f64","bool","char","str",
-                    "any","auto","Type","StructType","Null","Namespace"
+                    "any","auto","Type","TypeStruct","StructType","Null","Namespace"
                 };
                 String uname = v->name;
                 for (const char* bt : builtinTypes)
@@ -790,10 +790,15 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
             }
             case NodeTypes::NodeTypeOf: {
                 auto* n = static_cast<struct NodeTypeOf*>(node);
-                if (n->has_static_type && !n->static_type_ambiguous)
+                if (n->has_static_type && !n->static_type_ambiguous) {
                     // typeof/typeis оба дают type-значение (T_TYPE): так `typeof(x) == i64`
                     // сравнивается с типовым литералом (Box::typ), а не со строкой.
+                    if (n->static_type == "StructType") {
+                        // Struct type values have kind T_STRUCTTYPE; keep distinct
+                        return "rt::Box::typ(\"StructType\")";
+                    }
                     return "rt::Box::typ(" + quote(n->static_type) + ")";
+                }
                 // typeis поля на generic-структуре: узел неоднозначен (разные инстансы),
                 // но объявленный тип сохранён на самом инстансе -> читаем его в рантайме.
                 if (n->is_static) {

@@ -1134,9 +1134,9 @@ static inline Box op_dispatch(char op, Ctx& ctx, Box l, Box r) {
         return typunion(Box::typ("Null"), r);
 
     if (op == 'l' && is_type_box(l) && is_type_box(r))
-        return Box::boo(typcontains(r.s, l.s) || (l.s == "StructType" && r.s == "Type") || (r.s == "StructType" && l.s == "StructType"));
+        return Box::boo(typcontains(r.s, l.s) || (l.s == "StructType" && r.s == "TypeStruct") || (l.s == "TypeStruct" && r.s == "Type") || (l.s == "StructType" && r.s == "Type") || (r.s == "StructType" && l.s == "StructType") || (r.s == "TypeStruct" && l.s == "TypeStruct"));
     if (op == 'r' && is_type_box(l) && is_type_box(r))
-        return Box::boo(typcontains(l.s, r.s) || (l.s == "StructType" && r.s == "Type"));
+        return Box::boo(typcontains(l.s, r.s) || (l.s == "StructType" && r.s == "TypeStruct") || (l.s == "TypeStruct" && r.s == "Type") || (l.s == "StructType" && r.s == "Type"));
     // >> на типах: a >> b — каждый элемент a содержится в b (a ⊆ b)
     if (op == 'r' && l.t == Box::T_TYPE && r.t == Box::T_TYPE)
         return Box::boo(typcontains(r.s, l.s));

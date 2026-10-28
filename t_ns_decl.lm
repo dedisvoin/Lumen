@@ -1,6 +1,0 @@
-namespace N {
-    enum E { A, B }
-    struct S { static let v: i64 = 5; }
-}
-let x = N::E::B;
-let y = N::S::v;

@@ -276,9 +276,11 @@ struct Type {
         if (_T.isAuto()) return true;   // целевой auto принимает всё (напр. Array[auto])
         if (*this == _T) return true;
 
-        // StructType <: Type
+        // StructType <: TypeStruct <: Type
+        if (type == BASE && name == "StructType" && _T.type == BASE && _T.name == "TypeStruct") return true;
+        if (type == BASE && name == "TypeStruct" && _T.type == BASE && _T.name == "Type") return true;
         if (type == BASE && name == "StructType" && _T.type == BASE && _T.name == "Type") return true;
-        if (_T.type == BASE && _T.name == "StructType") return (*this == _T);
+        if (_T.type == BASE && (_T.name == "StructType" || _T.name == "TypeStruct")) return (*this == _T);
         if (_T.type == UNION) {
             for (const auto& e : _T.container_1)
                 if (*this >> e) return true;
@@ -290,8 +292,13 @@ struct Type {
                     for (const auto& e : _T.container_1)
                         if (*this >> e) return true;
                 }
+                if (_T.type == BASE && _T.name == "TypeStruct") {
+                    if (name == "StructType") return true;
+                    return false;
+                }
                 if (_T.type == BASE && _T.name == "Type") {
                     if (name == "StructType") return true;
+                    if (name == "TypeStruct") return true;
                     return false;
                 }
                 return false;

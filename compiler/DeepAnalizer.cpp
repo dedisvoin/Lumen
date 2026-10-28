@@ -508,6 +508,14 @@ struct ASTDeepAnalyzer {
                 if (co.ref_alias_node)
                     return staticTypeOfExpr(co.ref_alias_node,
                         co.ref_alias_ctx ? *co.ref_alias_ctx : context);
+                bool holds_type_value = (co.value.T == Ty::Type_) && co.value.value.has_value();
+                if (holds_type_value) {
+                    Type tv = co.value.get<Type>();
+                    bool struct_type_value = (tv.isStruct() && !tv.name.empty())
+                        || (tv.type == TypeType::BASE && (tv.name == "StructType" || tv.name == "TypeStruct"));
+                    if (struct_type_value) return Type(TypeType::BASE, "StructType");
+                    if (!tv.is_any && !tv.is_auto) return tv;
+                }
                 if (!(co.wait_type == Ty::Null) && !co.wait_type.is_auto)
                     return co.wait_type;
                 return co.value.T;
@@ -739,7 +747,7 @@ struct ASTDeepAnalyzer {
         {"i8", Ty::i8}, {"i16", Ty::i16}, {"i32", Ty::i32},
         {"i64", Ty::i64}, {"f16", Ty::f16}, {"f32", Ty::f32}, {"f64", Ty::f64},
         {"bool", Ty::Bool}, {"char", Ty::Char}, {"str", Ty::Str},
-        {"any", Ty::Any}, {"auto", Ty::Auto}, {"Type", Ty::Type_}, {"StructType", Ty::Type_},
+            {"any", Ty::Any}, {"auto", Ty::Auto}, {"Type", Ty::Type_}, {"TypeStruct", Ty::Type_}, {"StructType", Ty::Type_},
         {"Namespace", Ty::Namespace}, {"Null", Ty::Null},
         };
         for (auto& b : builtins) {
@@ -3100,6 +3108,15 @@ ContextObject::Modifiers saved_mods = active_mods;
                         break;
                     }
                 }
+                if (!var_decl->type_node && context_object.value.T == Ty::Type_
+                        && context_object.value.value.has_value()) {
+                    Type tv = context_object.value.get<Type>();
+                    if ((tv.isStruct() && !tv.name.empty())
+                            || (tv.type == TypeType::BASE && (tv.name == "StructType" || tv.name == "TypeStruct"))) {
+                        context_object.wait_type = Type(TypeType::BASE, "StructType");
+                    }
+                }
+
                 if (var_decl->type_node) {
                     Value type_value = execute(var_decl->type_node, context);
                     if (type_value.T != Ty::Type_) {
@@ -5354,6 +5371,8 @@ Node* real_branch = taken ? if_node->then_body : if_node->else_body;
                     // typeis(...) — статический (объявленный) тип как Type-значение.
                     Type st = staticTypeOfExpr(t->expr, context);
                     if (st.isStruct() && !st.name.empty()) {
+                        result = Value(Ty::Type_, Type(TypeType::BASE, String("StructType")));
+                    } else if (st.type == TypeType::BASE && st.name == "StructType") {
                         result = Value(Ty::Type_, Type(TypeType::BASE, String("StructType")));
                     } else {
                         result = new_type(st);

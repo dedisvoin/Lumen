@@ -1,4 +1,0 @@
-namespace N {
-    enum E { X=1, Y=2 }
-}
-echo N::E::Y;
