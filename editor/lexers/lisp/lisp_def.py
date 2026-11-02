@@ -1,19 +1,14 @@
 """
-Lisp — описание языка: кастомный лексер (LispLexer) + LSP (cl-lsp).
-
-Пер-языковая логика (Roswell-обёртка cl-lsp, ключевые слова) вынесена
-сюда из старого editor/lsp/config.py. Сам лексер — в lisp_lang.py рядом.
+Lisp — определение языка: лексер (LispLexer) + LSP (cl-lsp).
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 from editor.lexers.language_def import LanguageDef
 from editor.lexers.lisp.lisp_lang import LispLexer
 from editor.lexers.lsp_types import LspServerConfig
 
 
-# Fallback-ключевые слова для Lisp (лексер LispLexer раскрашивает сам;
-# keywords не используются, т.к. semantic_tokens=False)
 _LISP_KEYWORDS = (
     "defun", "defmacro", "defgeneric", "defmethod", "defclass", "defstruct",
     "defpackage", "in-package", "defvar", "defparameter", "defconstant",
@@ -32,30 +27,57 @@ _LISP_KEYWORDS = (
 
 
 def _find_cl_lsp() -> Optional[list]:
-    """Команда запуска cl-lsp (Common Lisp Language Server).
-
-    На POSIX достаточно имени в PATH. На Windows `cl-lsp` — Roswell-скрипт
-    без .exe/.bat, Python его не запустит: оборачиваем вызов через
-    `ros -Q -- <скрипт>` (ros.exe в PATH). Первый запуск долгий (SBCL +
-    quickload), запросы в Lumen стоят в очереди до готовности.
-    """
-    import os
+    """Поиск cl-lsp. Приоритет — локальная папка editor/lsp/bin/lisp."""
     import shutil
     from pathlib import Path
 
+    here = Path(__file__).resolve().parent  # editor/lexers/lisp
+    local_bin = here.parent.parent / "lsp" / "bin" / "lisp"  # editor/lsp/bin/lisp
+
+    # 1) Приоритет - локальная обёртка
+    wrapper_cmd = local_bin / "cl-lsp.cmd"
+    if wrapper_cmd.is_file():
+        return [str(wrapper_cmd)]
+
+    wrapper_bat = local_bin / "cl-lsp.bat"
+    if wrapper_bat.is_file():
+        return [str(wrapper_bat)]
+
+    # 2) Готовый .exe
+    for name in ("cl-lsp.exe",):
+        cand = local_bin / name
+        if cand.is_file():
+            return [str(cand)]
+
+    # 3) cl-lsp скрипт - через настоящий roswell
+    cl_lsp_script = local_bin / "cl-lsp"
+    cl_lsp_ros = local_bin / "cl-lsp.ros"
+    ros_real = Path(r"C:\Users\Ivan\scoop\apps\roswell\current\ros.exe")
+    ros = ros_real if ros_real.is_file() else (shutil.which("ros") or shutil.which("ros.exe"))
+
+    if cl_lsp_script.is_file() and ros:
+        return [str(ros), "-Q", "--", str(cl_lsp_script)]
+    if cl_lsp_ros.is_file() and ros:
+        return [str(ros), "-Q", "--", str(cl_lsp_ros)]
+
+    # 4) PATH
     exe = shutil.which("cl-lsp")
     if exe:
         return [exe]
+
+    # 5) Roswell из home
     home = Path.home()
     for script in (home / ".roswell" / "bin" / "cl-lsp",
                    home / ".roswell" / "lisp" / "quicklisp" / "bin" / "cl-lsp"):
         if script.is_file():
+            if ros:
+                return [ros, "-Q", "--", str(script)]
             return ["ros", "-Q", "--", str(script)]
-    return None
+
+    return ["cl-lsp"]
 
 
 def lisp_def() -> LanguageDef:
-    """Описание языка Lisp для агрегатора editor/lexers/registry.py."""
     return LanguageDef(
         id="lisp",
         extensions=[".lisp", ".lsp", ".cl", ".el", ".scm", ".ss", ".rkt"],
@@ -65,7 +87,7 @@ def lisp_def() -> LanguageDef:
             server_name="cl-lsp",
             command=_find_cl_lsp() or ["cl-lsp"],
             root_markers=(".asd",),
-            trigger_chars={":"},
+            trigger_chars={":", "(", "-", "/"},
             semantic_tokens=False,
             inlay_hints=False,
             hover=True,

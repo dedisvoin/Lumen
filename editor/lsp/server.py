@@ -184,7 +184,8 @@ class LspServer(QObject):
                         msg = json.loads(body.decode("utf-8"))
                     except Exception as exc:
                         _log.warning("LSP: failed to parse JSON-RPC body "
-                                     "(%s): %r", exc, body[:200])
+                                     "(%s): %r (content_length=%s)",
+                                     exc, body, content_length)
                         continue
                     self.message.emit(msg)
                 else:

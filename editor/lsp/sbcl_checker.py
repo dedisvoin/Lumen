@@ -27,12 +27,7 @@ _sbcl_cache: List = [None]
 
 
 def find_sbcl() -> str:
-    """Путь к sbcl.exe: настройка lsp.sbcl_path, PATH, затем Roswell.
-
-    Roswell кладёт SBCL в ~/.roswell/impls/<arch>/<имя>/<версия>/bin:
-    перебираем все вхождения sbcl.exe, берём самое новое (сортировка
-    строк даёт стабильный порядок имён).
-    """
+    """Путь к sbcl.exe: настройка lsp.sbcl_path, локальная папка editor/lsp/bin/lisp, PATH, затем Roswell."""
     if _sbcl_cache[0] is not None:
         return _sbcl_cache[0]
     exe = ""
@@ -40,7 +35,15 @@ def find_sbcl() -> str:
     if path:
         exe = path if os.path.isfile(path) else ""
     if not exe:
-        exe = shutil.which("sbcl") or ""
+        here = Path(__file__).resolve().parent  # editor/lsp
+        local_bin = here / "bin" / "lisp"
+        for name in ("sbcl.exe", "sbcl"):
+            cand = local_bin / name
+            if cand.is_file():
+                exe = str(cand)
+                break
+    if not exe:
+        exe = shutil.which("sbcl") or shutil.which("sbcl.exe") or ""
     if not exe:
         home = Path.home()
         impls = home / ".roswell" / "impls"
@@ -61,11 +64,15 @@ def check_file(path: str, timeout: float = 20.0) -> List[Tuple[int, int, str, st
     sbcl = find_sbcl()
     if not sbcl or not _CHECK_SCRIPT.is_file():
         return []
+    env = os.environ.copy()
+    sbcl_path = Path(sbcl)
+    if sbcl_path.parent.name == "lisp" and (sbcl_path.parent / "sbcl.core").is_file():
+        env["SBCL_HOME"] = str(sbcl_path.parent)
     try:
         proc = subprocess.run(
-            [sbcl, "--noinform", "--non-interactive",
+            [sbcl, "--noinform", "--non-interactive", "--disable-debugger",
              "--load", str(_CHECK_SCRIPT), "--", path],
-            capture_output=True, timeout=timeout,
+            capture_output=True, timeout=timeout, env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return []

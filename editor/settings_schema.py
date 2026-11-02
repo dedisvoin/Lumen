@@ -508,6 +508,13 @@ SCHEMA: list = [
                         "help": "Show type/signature popups while hovering "
                                 "over code.",
                     },
+                    {
+                        "key": "lsp.lisp.check_delay",
+                        "label": "Lisp check delay (ms)",
+                        "type": "int",
+                        "help": "Delay before the open Lisp file is "
+                                "auto-checked via SBCL after typing.",
+                    },
                 ],
             },
             {

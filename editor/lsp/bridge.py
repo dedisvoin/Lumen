@@ -47,6 +47,7 @@ from editor.widgets.hover_popup import HoverPopup
 from editor.widgets.signature_popup import SignaturePopup
 from editor.widgets.error_lens import ErrorLensOverlay
 from editor.themed_dialogs import input_text
+from editor.settings_store import app_settings
 
 LSP_MARGIN = 2           # маргин 2: клик по нему — текст диагностики
 LSP_MARGIN_WIDTH = 16
@@ -64,7 +65,7 @@ _SEMANTIC_RETRY_MS = 1200  # пустой ответ токенов — анал
 _SEMANTIC_MAX_RETRIES = 8  # потолок повторов (~10 с от открытия файла)
 _INLAY_DELAY_MS = 650      # inlay-подсказки запрашиваем после didChange
 _SIG_DELAY_MS = 250        # задержка запроса сигнатуры после '(' / ','
-_LISP_CHECK_DELAY_MS = 1500  # пауза ввода до автопроверки .lisp через SBCL
+_LISP_CHECK_DELAY_MS = 400  # пауза ввода до автопроверки .lisp через SBCL
 
 
 
@@ -158,6 +159,13 @@ class LspEditorBridge(QObject):
         self._lisp_check_timer = QTimer(self)
         self._lisp_check_timer.setSingleShot(True)
         self._lisp_check_timer.timeout.connect(self._lisp_check_auto)
+        # Retry подключения к LSP: сервер может подняться позже, чем
+        # момент open файла (например, .lisp открыт на старте редактора —
+        # сессия ещё не готова, attach() тогда просто бросает попытку).
+        self._attach_retry_timer = QTimer(self)
+        self._attach_retry_timer.setSingleShot(True)
+        self._attach_retry_timer.timeout.connect(self._attach_retry)
+        self._attach_retries = 0
         self._lisp_check_req = 0  # инвалидация устаревших результатов
         self._lisp_done.connect(self._apply_lisp_check)
         try:
@@ -182,6 +190,10 @@ class LspEditorBridge(QObject):
         self._schedule_lisp_check()
         if not manager.server_available(ed.language_id):
             self.attached = False
+            # Сервер ещё не поднялся (например, LSP-сессия запускается после
+            # open файла — файл открыт на старте редактора). Повторяем попытку
+            # подключения вместо того, чтобы навсегда потерять LSP для редактора.
+            self._schedule_attach_retry()
             return
         self._config = config
         self._session = manager.register_editor(ed)
@@ -195,8 +207,31 @@ class LspEditorBridge(QObject):
             if self._config.inlay_hints:
                 self._inlay_timer.start(_INLAY_DELAY_MS)
 
+    def _schedule_attach_retry(self):
+        """Планирует повторную попытку attach() через ~1 с (если ещё не
+        запланирована и редактор не прикреплён)."""
+        if self.attached or self._attach_retry_timer.isActive():
+            return
+        self._attach_retry_timer.start(1000)
+
+    def _attach_retry(self):
+        """Повторная попытка подключения к LSP-серверу."""
+        self._attach_retry_timer.stop()
+        if self.attached:
+            return
+        if (self.editor.file_path
+                and get_lsp_manager().server_available(
+                    self.editor.language_id)):
+            self.attach()
+            return
+        # Сервер всё ещё не поднялся — запланировать следующую попытку
+        if getattr(self, "_attach_retries", 0) < 120:
+            self._attach_retries = getattr(self, "_attach_retries", 0) + 1
+            self._schedule_attach_retry()
+
     def detach(self):
         """Отключает редактор от LSP (смена языка, закрытие вкладки)."""
+        self._attach_retry_timer.stop()
         self.hide_popup()
         self._clear_ctrl_underline()
         self._clear_hover_literal()
@@ -331,11 +366,16 @@ class LspEditorBridge(QObject):
             },
         }
 
+    def _lisp_check_delay(self) -> int:
+        """Задержка перед автопроверкой .lisp через SBCL — настройка
+        lsp.lisp.check_delay, по умолчанию модульная _LISP_CHECK_DELAY_MS."""
+        return app_settings().get_int("lsp.lisp.check_delay", _LISP_CHECK_DELAY_MS)
+
     def _schedule_lisp_check(self):
         """Запускает таймер автопроверки .lisp через SBCL (язык + путь)."""
         ed = self.editor
         if getattr(ed, "language_id", None) == "lisp" and ed.file_path:
-            self._lisp_check_timer.start(_LISP_CHECK_DELAY_MS)
+            self._lisp_check_timer.start(self._lisp_check_delay())
 
     def _lisp_check_auto(self):
         """Автопроверка .lisp через SBCL (открытие файла + пауза в наборе).
@@ -422,7 +462,7 @@ class LspEditorBridge(QObject):
         if (self.editor.language_id == "lisp"
                 and self.editor.file_path is not None):
             self._lisp_check_req += 1  # результат незавершённой проверки устарел
-            self._lisp_check_timer.start(_LISP_CHECK_DELAY_MS)
+            self._lisp_check_timer.start(self._lisp_check_delay())
         # Семантическая подсветка пересчитается после анализа сервера;
         # старые токены пока сдвигаем по месту правки
         if self._semantic_active:

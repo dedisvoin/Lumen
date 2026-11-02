@@ -426,6 +426,14 @@ class CodeEditor(QsciScintilla):
             return False
         text = event.text()
         if len(text) == 1:
+            # В Lisp символическая кавычка ' — это quote-спецификатор, а не
+            # открывающая кавычка: авто-пара не нужна — просто вставляем символ.
+            if text == "'" and getattr(self, "language_id", None) == "lisp":
+                line, idx = self.getCursorPosition()
+                self.insert(text)
+                self.setCursorPosition(line, idx + 1)
+                self._completion.after_edit()
+                return True
             if text in ('"', "'"):
                 # автозакрытие кавычек: перешагивание пары, вставка
                 # пары; внутри строки/комментария — одиночный символ
@@ -1147,9 +1155,81 @@ class CodeEditor(QsciScintilla):
             }}
         """
 
+    def _open_codesnap_tab(self):
+        try:
+            from editor.codesnap.data import CodeSnapData
+            from editor.widgets.editor_pane import EditorPane
+            from PyQt6.QtWidgets import QApplication
+            from editor.scintilla_constants import SCI_GETSTYLEAT
+            if not self.hasSelectedText():
+                return
+            text = self.selectedText()
+            line_from = 0
+            line_to = 0
+            start_col = 0
+            end_col = 0
+            sel_start = -1
+            sel_end = -1
+            try:
+                line_from, start_col, line_to, end_col = self.getSelection()
+                sel_start = self.SendScintilla(self.SCI_GETSELECTIONSTART)
+                sel_end = self.SendScintilla(self.SCI_GETSELECTIONEND)
+            except Exception:
+                pass
+            styles = []
+            try:
+                if sel_start >= 0 and sel_end > sel_start:
+                    for pos in range(sel_start, sel_end):
+                        styles.append(int(self.SendScintilla(SCI_GETSTYLEAT, pos)))
+                elif text:
+                    styles = [0] * len(text)
+            except Exception:
+                styles = []
+            data = CodeSnapData(
+                text=text,
+                file_path=self.file_path,
+                language_id=self.language_id,
+                line_from=line_from,
+                line_to=line_to,
+                start_col=start_col,
+                end_col=end_col,
+                styles=styles if styles else None,
+                start_pos=sel_start,
+            )
+            pane = None
+            p = self.parent()
+            while p is not None:
+                try:
+                    if isinstance(p, EditorPane):
+                        pane = p
+                        break
+                except Exception:
+                    break
+                p = p.parent()
+            if pane is None:
+                try:
+                    w = QApplication.activeWindow()
+                    if w is not None and hasattr(w, 'tile_manager'):
+                        pane = w.tile_manager.get_active_pane()
+                except Exception:
+                    pane = None
+            if pane is not None and hasattr(pane, 'add_codesnap_tab'):
+                pane.add_codesnap_tab(data)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            pass
+
     def contextMenuEvent(self, event):
         """Правая кнопка: стандартное меню QScintilla в цветах темы."""
         menu = self.createStandardContextMenu()
+        try:
+            if self.hasSelectedText():
+                menu.addSeparator()
+                act = menu.addAction("Открыть в CodeSnap-вкладке")
+                act.triggered.connect(self._open_codesnap_tab)
+        except Exception:
+            pass
         if self._menu_qss:
             menu.setStyleSheet(self._menu_qss)
         menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)

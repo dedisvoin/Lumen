@@ -38,5 +38,10 @@
     "name": "Run bench",
     "commands": "lumenc -f @AT_FILE -d -build -bench\nout",
     "type": "Other"
+  },
+  {
+    "name": "Run Lisp",
+    "commands": "sbcl --script @AT_FILE",
+    "type": "Command"
   }
 ]

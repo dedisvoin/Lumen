@@ -79,6 +79,7 @@ DEFAULTS: dict = {
     "lsp.sbcl_path": "",
     "lsp.lisp.error_lens": True,
     "lsp.lisp.hover": True,
+    "lsp.lisp.check_delay": 400,
     "lsp.rust_analyzer_path": "",
     "lsp.rust_analyzer_args": "",
     "lsp.rust.check_on_save": True,

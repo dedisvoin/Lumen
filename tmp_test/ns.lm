@@ -1,5 +1,0 @@
-namespace N {
-    enum E { A, B }
-    struct S { static let x: i64 = 10; }
-}
-echo N::E::B; echo N::S::x;

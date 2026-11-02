@@ -8,9 +8,12 @@ VS Code). Enter/Tab вставляют слово, для сниппетов —
 с плейсхолдерами (Tab/Shift+Tab — навигация, индикатор 5).
 """
 
+import logging
 import os
 import re
 from typing import Dict, List, Optional, Tuple
+
+_log = logging.getLogger("lumen.completion")
 
 from PyQt6 import sip
 
@@ -144,6 +147,7 @@ _WORD_CHARS = set(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "0123456789_#"
 )
+_LISP_WORD_CHARS = _WORD_CHARS | {"-"}
 
 # Директива подключения началась и каретка внутри её кавычек: показываем
 # файлы/папки по пути, а не слова языка.
@@ -210,6 +214,51 @@ _LSP_KIND_MAP = {
     1002: 5,  # Lumen #pragma/#include/#define -> директива
     1003: 2,  # Lumen модификатор (const/static/...) -> модификатор
 }
+
+# Ключевые слова Common Lisp (для fallback-детекции типа по имени символа,
+# когда LSP-сервер не прислал CompletionItem.kind)
+_LISP_KEYWORDS_SET = frozenset((
+    "defun", "defmacro", "defgeneric", "defmethod", "defclass", "defstruct",
+    "defpackage", "in-package", "defvar", "defparameter", "defconstant",
+    "lambda", "let", "let*", "flet", "labels", "macrolet", "if", "cond",
+    "case", "when", "unless", "and", "or", "not", "quote", "quasiquote",
+    "function", "setq", "setf", "progn", "loop", "do", "do*", "dolist",
+    "dotimes", "return", "return-from", "block", "catch", "throw",
+    "unwind-protect", "multiple-value-bind", "eval-when", "the", "declare",
+    "handler-case", "handler-bind", "ignore-errors", "assert", "check-type",
+    "go", "tagbody", "incf", "decf", "push", "pop", "pushnew", "car", "cdr",
+    "cons", "list", "append", "reverse", "mapcar", "apply", "funcall",
+    "format", "print", "prin1", "princ", "read", "read-line", "load",
+    "compile", "compile-file", "eval", "error", "warn", "signal",
+    "make-instance", "slot-value", "values", "nth-value",
+))
+
+
+def _completion_kind(item: dict, label: str) -> int:
+    """LSP CompletionItem.kind -> категория иконки (см. _COMPLETION_GROUPS).
+
+    Если сервер не дал тип (kind не задан или Text) — выносим по имени
+    символа: заглавная = класс/структура, ключевое слово Lisp = keyword,
+    иначе = функция. Это нужно, чтобы функции/классы/переменные из
+    разных LSP (clangd, cl-lsp и др.) получали свой иконка, а не всегда
+    одну и ту же «переменную».
+    """
+    raw_kind = item.get("kind")
+    kind = _LSP_KIND_MAP.get(raw_kind, 9) if raw_kind else _LSP_KIND_MAP[1]
+    if raw_kind and raw_kind != 1:
+        if label.lower() in _LSP_TYPE_KEYWORDS:
+            return 3  # int/char/void — это тип, а не ключевое слово
+        return kind
+    # Fallback: тип неизвестен — определяем по имени
+    low = (label or "").lower()
+    if low and low in _LSP_TYPE_KEYWORDS:
+        return 3  # int/char/void — это тип, а не ключевое слово
+    if low and low in _LISP_KEYWORDS_SET:
+        return 1  # ключевое слово Lisp
+    if label and label[0].isupper():
+        return 7  # класс/структура
+    return 10  # функция
+
 
 # Ключевые слова-типы C++: clangd шлёт их как Keyword, но в списке они
 # должны быть помечены как тип (T), а не ключевое слово (K)
@@ -550,6 +599,8 @@ class CompletionEngine:
     def __init__(self, editor):
         self.editor = editor
         self.enabled = False
+        self.language_id = ""
+        self._lsp_config = None
         self._icons_registered = False
         self._static_words: List[Tuple[str, int]] = []
         self._dynamic_words: Dict[str, int] = {}
@@ -604,9 +655,10 @@ class CompletionEngine:
 
     def set_language(self, language_id):
         """Кастомный список: LumenLang (.lm) из лексера, LSP-языки — из сервера."""
+        self.language_id = language_id
+        self._refresh_lsp_state()
         config = get_lsp_manager().config_for(language_id)
-        self.lsp_enabled = bool(config) and get_lsp_manager().server_available(
-            language_id)
+        self._lsp_config = config
         self._lsp_trigger_chars = (
             set(config.trigger_chars) if config else set(_LSP_TRIGGER_CHARS)
         )
@@ -616,14 +668,44 @@ class CompletionEngine:
         # а не набор регулярок по тексту. Без сервера — кастомный список.
         if language_id == "lumenlang":
             self.enabled = not self.lsp_enabled
-        if not (self.enabled or self.lsp_enabled):
+        if not (self.enabled or self._lsp_usable()):
             self._rebuild_timer.stop()
             self.hide_popup()
             self.editor.setAutoCompletionSource(
                 QsciScintilla.AutoCompletionSource.AcsNone
             )
-        if self.lsp_enabled and not self._icons_registered:
+        if self._lsp_usable() and not self._icons_registered:
             self._register_icons()
+
+    def _refresh_lsp_state(self):
+        """Перечитывает доступность LSP для текущего языка редактора.
+
+        Вызывается при смене языка и через _lsp_usable(): сервер может
+        успеть подняться позже, чем момент первого open файла (например,
+        .lisp открыт на старте редактора — сессия ещё не готова, но уже
+        «привязана» к языку).
+        """
+        lang = getattr(self.editor, "language_id", "") or ""
+        config = get_lsp_manager().config_for(lang)
+        self.lsp_enabled = bool(config) and bool(
+            get_lsp_manager().server_available(lang))
+
+    def _lsp_usable(self) -> bool:
+        """LSP-сервер доступен для языка редактора *прямо сейчас*.
+
+        Если флаг ещё не выключен — считаем доступным (он проставляется при
+        смене языка / refresh). Если выключен — перечитываем через LspManager:
+        позитивная доступность кэшируется менеджером, негативная — сбрасывается
+        при повторной проверке, поэтому проверка здесь не «застревает» в False
+        от раннего старта редактора (файл открыт до готовности cl-lsp).
+        """
+        if self.lsp_enabled:
+            return True
+        lang = getattr(self.editor, "language_id", "") or ""
+        config = get_lsp_manager().config_for(lang)
+        if config is None:
+            return False
+        return bool(get_lsp_manager().server_available(lang))
 
     def on_lexer_set(self, lexer):
         """Вызывается после setLexer() — инициализирует автодополнение."""
@@ -731,7 +813,7 @@ class CompletionEngine:
             + scrollbar_qss(bg.name(), fg)
         )
         # Иконки категорий — цветами стилей темы (как подсветка кода)
-        if self.enabled or self.lsp_enabled:
+        if self.enabled or self._lsp_usable():
             self._register_icons(styles)
 
         # Цвет индикатора плейсхолдеров — как выделение в редакторе
@@ -893,14 +975,16 @@ class CompletionEngine:
         return out
 
     def _word_start(self, pos: int) -> Optional[int]:
-        """Начало слова LumenLang слева от позиции (None, если не в слове)."""
+        """Начало слова слева от позиции (None, если не в слове)."""
         editor = self.editor
+        lang = getattr(editor, "language_id", "") or ""
+        word_chars = _LISP_WORD_CHARS if lang == "lisp" else _WORD_CHARS
         line = editor.SendScintilla(SCI_LINEFROMPOSITION, pos)
         line_start = editor.SendScintilla(SCI_POSITIONFROMLINE, line)
         col = pos - line_start
         line_bytes = editor.text(line).encode("utf-8")
         b = col
-        while b > 0 and chr(line_bytes[b - 1]) in _WORD_CHARS:
+        while b > 0 and chr(line_bytes[b - 1]) in word_chars:
             b -= 1
         if b == col:
             return None
@@ -1038,7 +1122,7 @@ class CompletionEngine:
         self._hide_doc_popup()
         if item is None:
             return
-        if (self.lsp_enabled and not self.enabled
+        if (self._lsp_usable() and not self.enabled
                 and self._include_context() is None):
             self._lsp_accept(item)
             return
@@ -1079,7 +1163,7 @@ class CompletionEngine:
             self._doc_show("")
             return
         text = item.data(Qt.ItemDataRole.UserRole + 3) or ""
-        if not text and self.lsp_enabled and not self.enabled:
+        if not text and self._lsp_usable() and not self.enabled:
             word = item.data(Qt.ItemDataRole.UserRole)
             if word:
                 cached = self._doc_cache.get(word)
@@ -1135,7 +1219,7 @@ class CompletionEngine:
         editor = self.editor
         if editor is None or sip.isdeleted(editor):
             return
-        if not (self.lsp_enabled and not self.enabled):
+        if not (self._lsp_usable() and not self.enabled):
             return
         self._doc_hover_timer.stop()
         seq = self._doc_hover_seq + 1
@@ -1182,30 +1266,31 @@ class CompletionEngine:
     # ------------------------------------------------------------------
 
     def _lsp_request(self):
-        """Запрашивает дополнения у clangd на текущей позиции курсора."""
+        """Запрашивает дополнения у LSP на текущей позиции курсора."""
         editor = self.editor
         if editor is None or sip.isdeleted(editor):
             return
-        if not self.lsp_enabled:
+        if not self._lsp_usable():
+            _log.debug("lsp_completion: skip - lsp disabled")
             return
         if self._include_context() is not None:
+            _log.debug("lsp_completion: skip - include-context")
             return  # файловое дополнение #include ведёт клиентский список
+        lang = getattr(editor, "language_id", "") or ""
         pos = editor.SendScintilla(SCI_GETCURRENTPOS)
-        # Без префикса показываем список только после триггер-символов
-        # (доступ к членам через . : >) — иначе clangd вернёт всё подряд
         prefix = self._current_prefix()
+        _log.debug("lsp_completion: req lang=%s prefix=%r pos=%d", lang, prefix, pos)
+        # Без префикса показываем список только после триггер-символов
         if not prefix:
             line, col = editor.getCursorPosition()
             line_text = editor.text(line)
             if (col == 0 or col > len(line_text)
                     or line_text[col - 1] not in self._lsp_trigger_chars):
+                _log.debug("lsp_completion: skip - no prefix, no trigger char")
                 self.hide_popup()
                 return
         seq = self._lsp_seq + 1
         self._lsp_seq = seq
-        # Синхронизируем буфер с clangd: без этого запрос completion (180 мс)
-        # уходит раньше отложенного didChange (400 мс), и clangd отвечает по
-        # старому тексту — после медленного набора «a.» поля структуры не видны
         get_lsp_manager().notify_change(editor)
         get_lsp_manager().request_completion(
             editor, pos_to_lsp(editor, pos),
@@ -1213,29 +1298,36 @@ class CompletionEngine:
         )
 
     def _lsp_on_result(self, seq: int, req_pos: int, prefix: str, items):
-        """Ответ clangd: показывает список (или прячет, если устарел)."""
-        if seq != self._lsp_seq or not self.lsp_enabled:
+        """Ответ LSP: показывает список (или прячет, если устарел)."""
+        if seq != self._lsp_seq or not self._lsp_usable():
+            _log.debug("lsp_completion: drop stale seq=%s", seq)
             return
         if self._include_context() is not None:
+            _log.debug("lsp_completion: drop - include-context")
             return  # ответ устарел: каретка ушла в #include "…"
         editor = self.editor
         if editor is None or sip.isdeleted(editor):
             return
         lang = getattr(editor, "language_id", "") or ""
         items = items or []
-        # Курсор ушёл далеко от места запроса — ответ устарел;
-        # список не прячем (он обновится свежим запросом)
-        if abs(editor.SendScintilla(SCI_GETCURRENTPOS) - req_pos) > 3:
+        _log.debug("lsp_completion: result lang=%s items=%d req_pos=%d cur=%d", lang, len(items), req_pos, editor.SendScintilla(SCI_GETCURRENTPOS))
+        # Курсор ушёл далеко от места запроса — ответ устарел, но
+        # попробуем показать, если мы всё ещё в том же слове (иначе скрываем)
+        cur = editor.SendScintilla(SCI_GETCURRENTPOS)
+        if abs(cur - req_pos) > 80:
+            _log.debug("lsp_completion: drop - cursor moved too far")
             return
-        # Пока летел ответ, слово-контекст могло разрушиться (пробел,
-        # скобка) — показывать старый список нельзя
-        if not self._current_prefix():
+        # Пока летел ответ, слово-контекст могло разрушиться
+        cur_prefix = self._current_prefix()
+        if not cur_prefix:
             line, col = editor.getCursorPosition()
             line_text = editor.text(line)
             if (col == 0 or col > len(line_text)
                     or line_text[col - 1] not in self._lsp_trigger_chars):
                 self.hide_popup()
                 return
+        else:
+            prefix = cur_prefix  # используем актуальный префикс для фильтрации
         prefix_l = prefix.lower()
         rows: List[Tuple[str, int, str, str, dict, list, str]] = []
         docs: List[str] = []
@@ -1244,9 +1336,7 @@ class CompletionEngine:
             label = (item.get("label") or "").lstrip()
             if not label:
                 continue
-            kind = _LSP_KIND_MAP.get(item.get("kind", 1), 9)
-            if label.lower() in _LSP_TYPE_KEYWORDS:
-                kind = 3  # int/char/void — это тип, а не ключевое слово
+            kind = _completion_kind(item, label)
             doc = _plain_doc(item.get("documentation"))
             te = item.get("textEdit") or {}
             insert = _strip_snippet(
@@ -1432,7 +1522,7 @@ class CompletionEngine:
         показанный в after_edit попап.
         """
         if self.popup.isVisible():
-            if (self.lsp_enabled and not self.enabled
+            if (self._lsp_usable() and not self.enabled
                     and self._include_context() is None):
                 self._lsp_timer.start(_LSP_DEBOUNCE_MS)
             else:
@@ -1451,7 +1541,7 @@ class CompletionEngine:
 
     def should_refresh(self, event) -> bool:
         """Нужно ли проверять список после этого нажатия клавиши."""
-        if not (self.enabled or self.lsp_enabled):
+        if not (self.enabled or self._lsp_usable()):
             return False
         if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
             return True
@@ -1464,16 +1554,18 @@ class CompletionEngine:
             return True
         if self.enabled:
             return text in _WORD_CHARS
-        return text in _WORD_CHARS or text in self._lsp_trigger_chars
+        lang = getattr(self.editor, "language_id", "") or ""
+        word_chars = _LISP_WORD_CHARS if lang == "lisp" else _WORD_CHARS
+        return text in word_chars or text in self._lsp_trigger_chars
 
     def after_edit(self):
         """После вставки текста обновляет кастомный список автодополнения."""
-        if not (self.enabled or self.lsp_enabled):
+        if not (self.enabled or self._lsp_usable()):
             return
         editor = self.editor
         if editor is None or sip.isdeleted(editor):
             return
-        if (self.lsp_enabled and not self.enabled
+        if (self._lsp_usable() and not self.enabled
                 and self._include_context() is None):
             self._lsp_timer.start(_LSP_DEBOUNCE_MS)
             return

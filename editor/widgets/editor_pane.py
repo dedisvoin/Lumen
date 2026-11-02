@@ -270,19 +270,26 @@ class EditorPane(QWidget):
 
     def _add_tab_widget(self, widget, title: str, tab_data: dict,
                         activate: bool = True):
-        """Общая механика вкладки: addTab, tabData, тема, фокус.
+        """?????????? ???????????????? ??????????????: addTab, tabData, ????????, ??????????.
 
-        Единая точка для редактороподобных вкладок (терминал, диагностики,
-        live-перенос) — раньше один и тот же набор шагов копировался
-        в каждый метод добавления.
+        ???????????? ?????????? ?????? ?????????????????????????????????? ?????????????? (????????????????, ??????????????????????,
+        live-??????????????) ??? ???????????? ???????? ?? ?????? ???? ?????????? ?????????? ??????????????????????
+        ?? ???????????? ?????????? ????????????????????.
         """
         self.tabs.addTab(widget, title)
         idx = self.tabs.indexOf(widget)
         self.tabs.tabBar().setTabData(idx, tab_data)
         if activate:
             self.tabs.setCurrentWidget(widget)
-        widget.apply_theme(self.current_theme)
-        self.apply_pane_theme(self.current_theme)
+        try:
+            if hasattr(widget, 'apply_theme'):
+                widget.apply_theme(self.current_theme)
+        except Exception:
+            pass
+        try:
+            self.apply_pane_theme(self.current_theme)
+        except Exception:
+            pass
         return widget
 
     def add_diagnostics_tab(self, activate: bool = True) -> DiagnosticsWidget:
@@ -295,11 +302,52 @@ class EditorPane(QWidget):
                                     activate=activate)
 
     def add_symbols_tab(self, activate: bool = True) -> SymbolsWidget:
-        """Добавляет вкладку со списком символов активного редактора."""
+        """?????????????????? ?????????????? ???? ?????????????? ???????????????? ?????????????????? ??????????????????."""
         widget = SymbolsWidget(self.tile_manager, self.theme_manager)
         return self._add_tab_widget(widget, "Symbols",
                                     {"type": "symbols"},
                                     activate=activate)
+
+    def _find_codesnap_tab(self) -> Optional[int]:
+        from editor.codesnap.tab import CodeSnapTab
+        for i in range(self.tabs.count()):
+            if isinstance(self._unpack(self.tabs.widget(i)), CodeSnapTab):
+                return i
+        return None
+
+    def has_codesnap_tab(self) -> bool:
+        return self._find_codesnap_tab() is not None
+
+    def _accept_codesnap_widget(self, widget, data: dict):
+        from editor.codesnap.tab import CodeSnapTab
+        if isinstance(widget, CodeSnapTab):
+            try:
+                widget.setParent(self)
+            except Exception:
+                pass
+            title = data.get('title') or 'CodeSnap'
+            tab_data = dict(data)
+            tab_data['type'] = 'codesnap'
+            return self._add_tab_widget(widget, title, tab_data)
+        return self.add_codesnap_tab(getattr(widget, 'data', None), activate=True)
+
+    def add_codesnap_tab(self, data, activate: bool = True):
+        from editor.codesnap.tab import CodeSnapTab
+        title = "CodeSnap"
+        if getattr(data, 'file_path', None):
+            name = str(data.file_path).split('\\')[-1].split('/')[-1]
+            if hasattr(data, 'line_from') and hasattr(data, 'line_to') and data.line_to >= data.line_from:
+                title = f"CodeSnap • {name} (стр. {data.line_from + 1}–{data.line_to + 1})"
+            else:
+                title = f"CodeSnap • {name}"
+        theme = getattr(self, 'current_theme', None)
+        widget = CodeSnapTab(self, data, self.theme_manager, theme)
+        try:
+            if hasattr(widget, 'apply_theme') and theme:
+                widget.apply_theme(theme)
+        except Exception:
+            pass
+        return self._add_tab_widget(widget, title, {"type": "codesnap", "title": title}, activate=activate)
 
     def _set_diag_show_warnings(self, checked: bool):
         """Сохраняет состояние тогла варнингов между открытиями вкладки."""
@@ -762,6 +810,44 @@ class EditorPane(QWidget):
         return self._add_tab_widget(widget, "Symbols",
                                     {"type": "symbols"})
 
+    def _take_codesnap_widget(self, data: dict, source):
+        from PyQt6.QtWidgets import QTabBar, QTabWidget
+        from editor.codesnap.tab import CodeSnapTab
+        if not isinstance(source, QTabBar):
+            return None
+        tab_widget = source.parent()
+        if not isinstance(tab_widget, QTabWidget):
+            return None
+        idx = data.get("drag_index", -1)
+        if not (0 <= idx < tab_widget.count()):
+            return None
+        widget = tab_widget.widget(idx)
+        if not isinstance(widget, CodeSnapTab):
+            return None
+        if data.get("widget_id") is not None and id(widget) != data["widget_id"]:
+            return None
+        tab_widget.removeTab(idx)
+        bar = tab_widget.tabBar()
+        if bar is not None:
+            try:
+                bar._codesnap_handed_off = True
+            except Exception:
+                pass
+        return widget
+
+    def _accept_codesnap_widget_live(self, widget, data: dict):
+        from editor.codesnap.tab import CodeSnapTab
+        if isinstance(widget, CodeSnapTab):
+            try:
+                widget.setParent(self)
+            except Exception:
+                pass
+            title = data.get("title") or "CodeSnap"
+            tab_data = dict(data)
+            tab_data["type"] = "codesnap"
+            return self._add_tab_widget(widget, title, tab_data)
+        return None
+
     def _move_or_copy_tab(self, data: dict, source=None):
         if data.get("type") == "terminal":
             terminal = find_terminal(data.get("terminal_id"))
@@ -784,6 +870,15 @@ class EditorPane(QWidget):
             widget = self._take_symbols_widget(data, source)
             if widget is not None:
                 return self._add_symbols_widget(widget)
+            return
+
+        if data.get("type") == "codesnap":
+            widget = self._take_codesnap_widget(data, source)
+            if widget is not None:
+                res = self._accept_codesnap_widget_live(widget, data)
+                if res is not None:
+                    return res
+            # Не пересоздаём как редактор — просто игнорируем, чтобы не превратить в Untitled
             return
 
         # Переносим живой контейнер целиком (панель поиска, курсор и
