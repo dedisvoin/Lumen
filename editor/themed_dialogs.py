@@ -182,6 +182,16 @@ def about(parent, title, text, theme_manager, theme_name):
     box.exec()
 
 
+def text_message(parent, title, text, theme_manager, theme_name):
+    """QMessageBox с произвольным текстом (логи LSP и т.п.)."""
+    box = _message_box(parent, title, text,
+                       QMessageBox.Icon.Information,
+                       QMessageBox.StandardButton.Ok,
+                       theme_manager, theme_name)
+    box.exec()
+    return box
+
+
 # ---- QInputDialog ----
 
 def input_text(parent, title, label, theme_manager, theme_name,

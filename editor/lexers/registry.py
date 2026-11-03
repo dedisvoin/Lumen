@@ -138,6 +138,11 @@ def lsp_config(language_id: str,
     return cfg
 
 
+def lsp_language_ids() -> List[str]:
+    """Все language_id, для которых есть LSP-конфиг (встроенные + кастомные)."""
+    return sorted(set(_BUILTIN) | set(_CUSTOM))
+
+
 # --- помощники для LexerManager ---
 
 def language_for_ext(ext: str) -> Optional[str]:

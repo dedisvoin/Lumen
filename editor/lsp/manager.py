@@ -77,6 +77,29 @@ class LspManager(QObject):
         """Ошибка запуска LSP-сервера языка (для статус-бара) или None."""
         return self._errors.get(language_id)
 
+    def lsp_statuses(self) -> List[dict]:
+        """Состояния всех известных LSP-серверов.
+
+        Возвращает список словарей:
+            {language_id, server, state, error, root}
+
+        state: "running" — сессия есть и initialize завершён;
+               "error" — сессия завершилась с ошибкой (или не стартовала);
+               "not_started" — для языка есть конфиг, но сессии ещё нет.
+        """
+        out: List[dict] = []
+        for (lang, root), session in sorted(self._sessions.items()):
+            state = "running" if session.ready else "starting"
+            out.append({
+                "language_id": lang,
+                "server": (session.config.server_name
+                           or os.path.basename(session.config.command[0])),
+                "state": state,
+                "error": self._errors.get(lang) or "",
+                "root": root,
+            })
+        return out
+
     def _set_error(self, language_id: str, message: str):
         self._errors[language_id] = message
 

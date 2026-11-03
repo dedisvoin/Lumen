@@ -22,3 +22,4 @@ __pycache__
 editor/sessions/session.json
 editor/settings.json
 pp.lm
+.lisp

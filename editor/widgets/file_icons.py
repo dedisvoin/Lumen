@@ -54,6 +54,7 @@ DEFAULT_FILE_ICON = "undefine_language"
 
 # Все явные fill/stroke-цвета в SVG заменяем на цвет темы
 _SVG_COLOR_RE = re.compile(r'(fill|stroke)="#[0-9a-fA-F]{6}"')
+_SVG_CURRENT_COLOR_RE = re.compile(r'(fill|stroke)=(["\'])currentColor\2')
 
 # Рендерим SVG в увеличенном разрешении и плавно уменьшаем — так мелкие
 # иконки получаются чёткими, без размытия и «лесенок» (как иконки фолдинга)
@@ -173,9 +174,9 @@ def _render_svg(name: str, color: QColor, directory: Path,
         svg = svg_path.read_text(encoding="utf-8")
     except OSError:
         return QIcon()
-    svg = _SVG_COLOR_RE.sub(
-        lambda m: f'{m.group(1)}="{color.name()}"', svg
-    )
+    c = color.name()
+    svg = _SVG_COLOR_RE.sub(lambda m: f'{m.group(1)}="{c}"', svg)
+    svg = _SVG_CURRENT_COLOR_RE.sub(lambda m: f'{m.group(1)}="{c}"', svg)
     renderer = QSvgRenderer()
     if not renderer.load(svg.encode("utf-8")):
         return QIcon()

@@ -766,10 +766,18 @@ class MainWindow(FramelessWindow):
         self._sym_toggle_btn.setToolTip("Show/Hide Symbols")
         self._sym_toggle_btn.setIconSize(QSize(16, 16))
         self._sym_toggle_btn.toggled.connect(self._on_sym_toggle)
+        # Кнопка списка LSP-серверов (иконка lsp.svg в цветах темы): меню со
+        # всеми запущенными/ошибочными/не стартовавшими серверами + логами.
+        self._lsp_servers_btn = _StatusBarToggleButton(self._statusbar)
+        self._lsp_servers_btn.setCheckable(False)
+        self._lsp_servers_btn.setToolTip("LSP Servers")
+        self._lsp_servers_btn.setIconSize(QSize(16, 16))
+        self._lsp_servers_btn.clicked.connect(self._show_lsp_servers_menu)
+
         _StatusBarButtonSizer(
             self._statusbar,
             [self._tree_toggle_btn, self._diag_toggle_btn,
-             self._sym_toggle_btn],
+             self._sym_toggle_btn, self._lsp_servers_btn],
         )
 
         self.status_pos = QLabel("Ln 1, Col 1")
@@ -802,7 +810,7 @@ class MainWindow(FramelessWindow):
         # Слева резервируем место под квадратные кнопки-переключатели (дерево,
         # диагностики, символы — 3 шт. × высота бара 30px = 90px). Разделитель
         # идёт за кнопками с отступом в 3px.
-        status_layout.setContentsMargins(90 + 3, 0, 8, 0)
+        status_layout.setContentsMargins(120 + 3, 0, 8, 0)
         status_layout.setSpacing(16)
         # Вертикальный разделитель — сразу после кнопок, перед счётчиками.
         # Вложенный layout: слева отступ 3px (margins), справа — 3px (spacing).
@@ -952,6 +960,62 @@ class MainWindow(FramelessWindow):
             self.status_lsp_warn.setToolTip(error)
         if not self.status_lsp_warn.isVisible():
             self.status_lsp_warn.show()
+
+    # ---- LSP servers popup (кнопка в статус-баре) ----
+
+    def _show_lsp_servers_menu(self):
+        """Меню статус-бара: список LSP-серверов с состояниями и логами."""
+        manager = get_lsp_manager()
+        menu = QMenu(self._lsp_servers_btn)
+        menu.setTitle("LSP Servers")
+        statuses = manager.lsp_statuses()
+        if not statuses:
+            act = menu.addAction("No LSP servers configured")
+            act.triggered.connect(lambda: None)
+            menu.exec(self._lsp_servers_btn.mapToGlobal(QPoint(0, 0)))
+            return
+        for st in statuses:
+            server = st.get("server") or "?"
+            lang = st.get("language_id") or ""
+            state = st.get("state") or "?"
+            err = st.get("error") or ""
+            act = menu.addAction(f"{server} — {lang}: {state}")
+            act.setToolTip(err or f"{server} — {lang}: {state}")
+            act.triggered.connect(
+                lambda st=st: self._show_lsp_server_log(st))
+        logs_act = menu.addAction("Show logs of the active server")
+        logs_act.triggered.connect(self._show_lsp_server_log_for_current)
+        menu.exec(self._lsp_servers_btn.mapToGlobal(QPoint(0, 0)))
+
+    def _show_lsp_server_log_for_current(self):
+        """Лог активного LSP-сервера (stderr tail) — маленькое окно."""
+        editor = self._get_current_editor()
+        lang = getattr(editor, "language_id", "") or ""
+        st = None
+        for s in get_lsp_manager().lsp_statuses():
+            if s.get("language_id") == lang:
+                st = s
+                break
+        if st is None:
+            st = {"language_id": lang, "server": "?",
+                  "state": "not_started", "error": "", "root": ""}
+        self._show_lsp_server_log(st)
+
+    def _show_lsp_server_log(self, st) -> None:
+        """Окно с логом (stderr) выбранного LSP-сервера."""
+        manager = get_lsp_manager()
+        session = None
+        for key, s in sorted(manager._sessions.items()):
+            if key[0] == (st.get("language_id") or ""):
+                session = s
+                break
+        text = ""
+        if session is not None:
+            text = session.stderr_text() or ""
+        title = f"LSP log: {st.get('server')} ({st.get('language_id')})"
+        themed_dialogs.text_message(
+            self, title, text or "No logs available", self.theme_manager,
+            self.current_theme)
 
     # ---- current editor ----
 
@@ -1707,6 +1771,13 @@ class MainWindow(FramelessWindow):
         self._sym_toggle_btn.setIcon(
             self._sym_icon(self._sym_toggle_btn.isChecked())
         )
+
+        # Кнопка списка LSP-серверов в статус-баре (иконка lsp.svg в цветах
+        # темы; hover-подсветка как у кнопок-переключателей)
+        self._lsp_servers_btn.set_hover_color(tree_hover)
+        self._lsp_servers_btn.setIcon(load_ui_icon("lsp", QColor(fg)))
+        self._lsp_servers_btn.setCursor(
+            Qt.CursorShape.PointingHandCursor)
 
         # Кнопка настроек в тайтл-баре: иконка и подсветки в цветах темы
         settings_hover = QColor(fg)
