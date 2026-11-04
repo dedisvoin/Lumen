@@ -13,8 +13,8 @@ QSS `:hover` в Qt переключается мгновенно — анима�
   настроек/задач, стандартные диалоги (themed_dialogs).
 """
 
-from PyQt6.QtCore import QEasingCurve, QObject, QVariantAnimation
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QEasingCurve, QObject, QVariantAnimation, QRectF
+from PyQt6.QtGui import QColor, QPainter, QPainterPath
 
 HOVER_FADE_MS = 140  # длительность появления/исчезания подсветки
 
@@ -75,6 +75,8 @@ def install_titlebar_button_hover_fade():
 
     Патчим класс TitleBarButton: события входа/выхода начинают анимацию,
     а _getColors возвращает интерполированный между normal и hover цвет.
+    Также перехватываем paintEvent, чтобы рисовать закруглённую подсветку
+    с небольшим отступом от краёв (как у кнопок статус-бара).
     Задевает все уже созданные и будущие кнопки (эффект применяется во
     всех окнах с StandardTitleBar). Идемпотентно.
     """
@@ -90,6 +92,10 @@ def install_titlebar_button_hover_fade():
 
     _orig_enter = TitleBarButton.enterEvent
     _orig_leave = TitleBarButton.leaveEvent
+    _orig_paint = TitleBarButton.paintEvent
+
+    _HOVER_INSET = 4
+    _HOVER_RADIUS = 6
 
     def _fade(self):
         fade = getattr(self, '_hoverFade', None)
@@ -117,6 +123,26 @@ def install_titlebar_button_hover_fade():
         bg = mix_colors(self._normalBgColor, self._hoverBgColor, a)
         return col, bg
 
+    def paintEvent(self, e):
+        fade = getattr(self, '_hoverFade', None)
+        a = fade.progress() if fade is not None else 0.0
+        if a > 0.001:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            rect = self.rect().adjusted(
+                _HOVER_INSET, _HOVER_INSET,
+                -_HOVER_INSET, -_HOVER_INSET)
+            if rect.width() > 0 and rect.height() > 0:
+                bg = self._hoverBgColor if hasattr(self, '_hoverBgColor') else QColor(255, 255, 255, 30)
+                c = QColor(bg)
+                c.setAlpha(int(bg.alpha() * a))
+                path = QPainterPath()
+                path.addRoundedRect(QRectF(rect), _HOVER_RADIUS, _HOVER_RADIUS)
+                painter.fillPath(path, c)
+            painter.end()
+        _orig_paint(self, e)
+
     TitleBarButton.enterEvent = enterEvent
     TitleBarButton.leaveEvent = leaveEvent
     TitleBarButton._getColors = _getColors
+    TitleBarButton.paintEvent = paintEvent

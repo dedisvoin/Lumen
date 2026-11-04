@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QMenuBar,
     QLabel, QMenu,
     QHBoxLayout, QSplitter, QToolButton,
+    QSizePolicy,
 )
 
 from qframelesswindow import FramelessWindow, StandardTitleBar
@@ -83,6 +84,54 @@ def status_lsp_text(editor) -> str:
     inner = (getattr(editor, "language_id", "")
              if getattr(editor, "language_id", "") == "python" else ext)
     return f"{name}({inner})" if inner else name
+
+
+class _RoundedTitleMenuBar(QMenuBar):
+    """QMenuBar в тайтл-баре с закруглённым hover с отступом от краёв."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self._hover_action = None
+        self._hover_color = QColor(255, 255, 255, 30)
+
+    def set_hover_color(self, color: QColor):
+        self._hover_color = QColor(color)
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        act = self.actionAt(event.pos())
+        if act != self._hover_action:
+            self._hover_action = act
+            self.update()
+        if act is not None:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._hover_action is not None:
+            self._hover_action = None
+            self.update()
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._hover_action is not None:
+            rect = self.actionGeometry(self._hover_action)
+            if rect.isValid() and not rect.isNull():
+                r = rect.adjusted(5, 7, -5, -3)
+                if r.width() > 0 and r.height() > 0:
+                    c = QColor(self._hover_color)
+                    painter.setBrush(c)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawRoundedRect(r, 6, 6)
+        painter.end()
+        super().paintEvent(event)
 
 
 class _LspSpinner(QWidget):
@@ -260,8 +309,8 @@ class _TitleBarIconButton(QToolButton):
     через HoverFade; pressed — без анимации (мгновенный отклик на клик).
     """
 
-    _HOVER_INSET = 0
-    _HOVER_RADIUS = 0
+    _HOVER_INSET = 4
+    _HOVER_RADIUS = 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -448,10 +497,15 @@ class MainWindow(FramelessWindow):
         main_layout.setSpacing(0)
 
         # Menu bar — inline inside the title bar
-        self._menubar = QMenuBar(self.titleBar)
+        self._menubar = _RoundedTitleMenuBar(self.titleBar)
         self._menubar.setStyleSheet(
             "QMenuBar { background: transparent; border: none; }"
         )
+        self._menubar.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Preferred,
+        )
+
         self.titleBar.hBoxLayout.insertWidget(
             3, self._menubar, 0, Qt.AlignmentFlag.AlignLeft
         )
@@ -1602,15 +1656,15 @@ class MainWindow(FramelessWindow):
             }}
             StandardTitleBar QMenuBar::item {{
                 color: {fg};
-                padding: 7px 10px 5px 10px;
+                padding: 7px 12px 4px 12px;
                 background: transparent;
                 font-size: {MENU_FONT_SIZE}pt;
             }}
             StandardTitleBar QMenuBar::item:selected {{
-                background-color: {menu_hover};
+                background: transparent;
             }}
             StandardTitleBar QMenuBar::item:pressed {{
-                background-color: {menu_pressed};
+                background: transparent;
             }}
         """)
 
@@ -1778,6 +1832,12 @@ class MainWindow(FramelessWindow):
         self._lsp_servers_btn.setIcon(load_ui_icon("lsp", QColor(fg)))
         self._lsp_servers_btn.setCursor(
             Qt.CursorShape.PointingHandCursor)
+
+        # Менюбар в тайтл-баре: ховер с отступом
+        menu_hover_c = QColor(fg)
+        menu_hover_c.setAlpha(30)
+        if hasattr(self._menubar, "set_hover_color"):
+            self._menubar.set_hover_color(menu_hover_c)
 
         # Кнопка настроек в тайтл-баре: иконка и подсветки в цветах темы
         settings_hover = QColor(fg)
