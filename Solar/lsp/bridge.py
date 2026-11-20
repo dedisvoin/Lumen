@@ -1317,13 +1317,176 @@ class LspEditorBridge(QObject):
             return None
         return (pos, pos + 1)
 
+    def _lisp_list_end(self, doc: bytes, pos: int, limit: int) -> int:
+        """Return end (exclusive) of parenthesized list starting at pos=='('."""
+        if pos >= limit or doc[pos:pos + 1] != b'(':
+            return pos
+        depth = 0
+        i = pos
+        in_string = False
+        in_line_comment = False
+        in_block_comment = 0
+        while i < limit:
+            b = doc[i]
+            if in_block_comment:
+                if b == 0x7C and i + 1 < limit and doc[i + 1] == 0x23:  # |#
+                    in_block_comment -= 1
+                    i += 2
+                elif b == 0x23 and i + 1 < limit and doc[i + 1] == 0x7C:  # #|
+                    in_block_comment += 1
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if in_line_comment:
+                if b == 0x0A:  # \n
+                    in_line_comment = False
+                i += 1
+                continue
+            if in_string:
+                if b == 0x5C:  # \
+                    i += 2
+                elif b == 0x22:  # "
+                    in_string = False
+                    i += 1
+                else:
+                    i += 1
+                continue
+            if b == 0x3B:  # ;
+                in_line_comment = True
+                i += 1
+                continue
+            if b == 0x22:  # "
+                in_string = True
+                i += 1
+                continue
+            if b == 0x23 and i + 1 < limit and doc[i + 1] == 0x7C:  # #|
+                in_block_comment = 1
+                i += 2
+                continue
+            if b == 0x23 and i + 1 < limit and doc[i + 1] == 0x5C:  # #\
+                i += 2
+                if i < limit:
+                    i += 1
+                while i < limit:
+                    bb = doc[i]
+                    if bb in b' \t\r\n()[]{}"\',`;':
+                        break
+                    i += 1
+                continue
+            if b == 0x28:  # (
+                depth += 1
+            elif b == 0x29:  # )
+                depth -= 1
+                i += 1
+                if depth == 0:
+                    return i
+                continue
+            i += 1
+        return limit
+
+    def _lisp_quoted_form_range_at(self, pos: int) -> Optional[Tuple[int, int]]:
+        """Byte range of innermost quoted list '(...)' containing pos, if any."""
+        ed = self.editor
+        if getattr(ed, "language_id", None) != "lisp":
+            return None
+        try:
+            doc = ed.text().encode("utf-8")
+        except RuntimeError:
+            return None
+        if pos < 0 or pos > len(doc):
+            return None
+        return self._lisp_quoted_form_range_in(doc, pos, 0, len(doc))
+
+    def _lisp_quoted_form_range_in(
+            self, doc: bytes, pos: int, lo: int, hi: int
+    ) -> Optional[Tuple[int, int]]:
+        i = lo
+        in_string = False
+        in_line_comment = False
+        in_block_comment = 0
+        limit = min(hi, len(doc))
+        while i < limit:
+            b = doc[i]
+            if in_block_comment:
+                if b == 0x7C and i + 1 < limit and doc[i + 1] == 0x23:  # |#
+                    in_block_comment -= 1
+                    i += 2
+                elif b == 0x23 and i + 1 < limit and doc[i + 1] == 0x7C:  # #|
+                    in_block_comment += 1
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if in_line_comment:
+                if b == 0x0A:
+                    in_line_comment = False
+                i += 1
+                continue
+            if in_string:
+                if b == 0x5C:
+                    i += 2
+                elif b == 0x22:
+                    in_string = False
+                    i += 1
+                else:
+                    i += 1
+                continue
+            if b == 0x3B:  # ;
+                in_line_comment = True
+                i += 1
+                continue
+            if b == 0x22:  # "
+                in_string = True
+                i += 1
+                continue
+            if b == 0x23 and i + 1 < len(doc) and doc[i + 1] == 0x7C:  # #|
+                in_block_comment = 1
+                i += 2
+                continue
+            if b == 0x23 and i + 1 < len(doc) and doc[i + 1] == 0x5C:  # #\
+                i += 2
+                if i < len(doc):
+                    i += 1
+                while i < len(doc):
+                    bb = doc[i]
+                    if bb in b' \t\r\n()[]{}"\',`;':
+                        break
+                    i += 1
+                continue
+            if b == 0x27:  # '
+                j = i + 1
+                while j < len(doc) and doc[j] in (0x20, 0x09, 0x0D, 0x0A):
+                    j += 1
+                if j < len(doc) and doc[j] == 0x28:  # (
+                    qend = self._lisp_list_end(doc, j, len(doc))
+                    if qend > i and i <= pos < qend:
+                        inner = self._lisp_quoted_form_range_in(
+                            doc, pos, j + 1, max(j + 1, qend - 1))
+                        return inner or (i, qend)
+                    i = max(qend, i + 1)
+                    continue
+            if b == 0x28:  # unquoted list, can still scan inside for quoted forms
+                lend = self._lisp_list_end(doc, i, len(doc))
+                if i < pos < lend:
+                    inner = self._lisp_quoted_form_range_in(
+                        doc, pos, i + 1, max(i + 1, lend - 1))
+                    if inner is not None:
+                        return inner
+                i = max(lend, i + 1)
+                continue
+            i += 1
+        return None
+
     def _set_hover_literal(self, pos: int):
         """Слабое выделение токена под мышью (как Ctrl, но прозрачнее).
 
         Литералы — по содержимому строки, слова и пунктуация — по символам;
         LSP не нужен: подсветка работает и в файлах без сервера (.lm и т.п.).
         """
-        rng = self._literal_token_range(pos)
+        rng = self._lisp_quoted_form_range_at(pos)
+        if rng is None:
+            rng = self._literal_token_range(pos)
         if rng is None:
             rng = self._ctrl_token_range(pos)
         if rng is None:
@@ -1697,7 +1860,8 @@ class LspEditorBridge(QObject):
         tc = ThemeColors.from_theme_manager(self.editor.theme_manager, theme_name)
         # ErrorLens и подчёркивание диагностик — цветами темы (если заданы)
         self._overlay.apply_theme(tc.dark, tc.inlay_hint_color,
-                                  tc.error_color, tc.warning_color)
+                                  tc.error_color, tc.warning_color,
+                                  tc.inline_hint_background_color)
 
     def on_font_size_changed(self):
         self.hide_popup()

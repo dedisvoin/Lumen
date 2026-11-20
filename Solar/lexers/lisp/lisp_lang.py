@@ -11,7 +11,8 @@ quote/quasiquote/unquote и фолдинг по круглым скобкам.
 SCN_MODIFIED, фолдинг пересчитывается только когда изменились скобки.
 """
 
-from typing import List, Optional, Tuple
+import re
+from typing import List, Optional, Set, Tuple
 
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.Qsci import QsciLexerCustom
@@ -81,6 +82,16 @@ _OPERATOR_SYMBOLS = {
     'mod', 'rem', 'expt', 'sqrt', 'abs', 'min', 'max', 'logand', 'logior',
 }
 
+# Определения функций/макросов в документе: (defun name ...), (define (name ...) ...)
+# или (define name ...). Используется, чтобы подсвечивать голову формы как функцию
+# только если имя определено как callable в этом файле.
+_DEF_NAME_RE = re.compile(
+    r"\(\s*(?:defun|defmacro|defgeneric|defmethod|defalias|define|defsetf"
+    r"|define-compiler-macro|define-condition|define-method-combination"
+    r"|define-modify-macro|define-setf-expander)"
+    r"\s+(?:\(\s*([^\s()\"'`,;]+)|([^\s()\"'`,;]+))"
+)
+
 _RADIX_PREFIXES = ('x', 'X', 'o', 'O', 'b', 'B', 'c', 'C', 'r', 'R')
 
 
@@ -120,7 +131,7 @@ class LispLexer(QsciLexerCustom):
         STYLE_KEYWORD_ARG: ("special", QColor(249, 226, 175)),
         STYLE_PACKAGE: ("class_name", QColor(137, 220, 235)),
         STYLE_OPERATOR: ("operator", QColor(137, 180, 250)),
-        STYLE_SPECIAL: ("special", QColor(243, 139, 168)),
+        STYLE_SPECIAL: ("preprocessor", QColor(197, 134, 192)),
         STYLE_COMMENT_DOC: ("comment_doc", QColor(148, 226, 213)),
     }
 
@@ -134,6 +145,8 @@ class LispLexer(QsciLexerCustom):
         self._text: str = ""
         self._text_bytes: bytes = b""
         self._lines: List[str] = []
+        # Имена функций/макросов, определённых в документе (для подсветки вызовов)
+        self._defined_callables: Set[str] = set()
         # Состояние #| |# на начало строки: True — внутри блочного комментария
         self._block_state: List[bool] = []
         self._dirty: bool = True
@@ -227,6 +240,76 @@ class LispLexer(QsciLexerCustom):
     # ------------------------------------------------------------------
     # Основной токенизатор
     # ------------------------------------------------------------------
+
+    def _scan_quoted_list_end(self, text_bytes: bytes, pos: int, limit: int) -> int:
+        """Return exclusive end of a parenthesized list starting at pos.
+
+        Used to highlight the whole quoted form '(...) in one style. The scan is
+        structure-aware (nested parens, strings, ; comments, #| |# blocks, and
+        #\\ character literals) so the matching ')' is found reliably.
+        """
+        if pos >= limit or text_bytes[pos:pos + 1] != b'(':
+            return pos
+        depth = 0
+        i = pos
+        in_string = False
+        in_line_comment = False
+        in_block_comment = False
+        while i < limit:
+            b = text_bytes[i]
+            if in_block_comment:
+                if b == 0x7C and i + 1 < limit and text_bytes[i + 1] == 0x23:  # |#
+                    in_block_comment = False
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if in_line_comment:
+                if b == 0x0A:  # \n
+                    in_line_comment = False
+                i += 1
+                continue
+            if in_string:
+                if b == 0x5C:  # \
+                    i += 2
+                elif b == 0x22:  # "
+                    in_string = False
+                    i += 1
+                else:
+                    i += 1
+                continue
+
+            if b == 0x3B:  # ;
+                in_line_comment = True
+                i += 1
+                continue
+            if b == 0x22:  # "
+                in_string = True
+                i += 1
+                continue
+            if b == 0x23 and i + 1 < limit and text_bytes[i + 1] == 0x7C:  # #|
+                in_block_comment = True
+                i += 2
+                continue
+            if b == 0x23 and i + 1 < limit and text_bytes[i + 1] == 0x5C:  # #\
+                # Character literal #\a, #\Space, etc.
+                i += 2
+                while i < limit:
+                    bb = text_bytes[i]
+                    if bb in b' \t\r\n()[]{}"\',`;':
+                        break
+                    i += 1
+                continue
+            if b == 0x28:  # (
+                depth += 1
+            elif b == 0x29:  # )
+                depth -= 1
+                i += 1
+                if depth == 0:
+                    return i
+                continue
+            i += 1
+        return limit
 
     def styleText(self, start: int, end: int):
         editor = self.editor()
@@ -346,8 +429,24 @@ class LispLexer(QsciLexerCustom):
             if ch == "'":
                 next_is_defn = False
                 self.setStyling(ch_len, self.STYLE_SPECIAL)
-                last_sig = "'"
                 pos += ch_len
+                last_sig = "'"
+                # Highlight the whole quoted list '(...) in quote color.
+                j = pos
+                while j < end:
+                    c2, l2 = self._get_char_at(text_bytes, j, total_bytes)
+                    if c2 in ' \t\r\n':
+                        self.setStyling(l2, self.STYLE_DEFAULT)
+                        j += l2
+                        continue
+                    if c2 == '(':
+                        k = self._scan_quoted_list_end(text_bytes, j, end)
+                        self.setStyling(k - j, self.STYLE_SPECIAL)
+                        pos = k
+                        last_sig = ')'
+                    else:
+                        pos = j
+                    break
                 continue
             if ch == '`':
                 next_is_defn = False
@@ -444,7 +543,14 @@ class LispLexer(QsciLexerCustom):
             elif '::' in word or (':' in word and word[0] != ':'):
                 style = self.STYLE_PACKAGE
             elif last_sig == '(':
-                style = self.STYLE_FUNCTION
+                # Первый элемент формы подсвечиваем как функцию только если
+                # имя определено как функция/макрос в этом документе.
+                # Целиком цитируемые списки '(...) стилизуются как STYLE_SPECIAL
+                # раньше, поэтому их содержимое сюда не попадает.
+                if word in self._defined_callables:
+                    style = self.STYLE_FUNCTION
+                else:
+                    style = self.STYLE_VARIABLE
             else:
                 style = self.STYLE_VARIABLE
 
@@ -654,12 +760,22 @@ class LispLexer(QsciLexerCustom):
         self._hooked_editor = editor
         self._dirty = True
 
+    def _collect_defined_callables(self, text: str) -> Set[str]:
+        """Собирает имена функций/макросов, определённых в документе."""
+        names: Set[str] = set()
+        for m in _DEF_NAME_RE.finditer(text):
+            name = m.group(1) or m.group(2)
+            if name:
+                names.add(name)
+        return names
+
     def _refresh_cache(self, editor):
         """Обновляет кэш текста: 1 полный проход на правку."""
         text = editor.text()
         self._text = text
         self._text_bytes = text.encode('utf-8')
         self._lines = text.split('\n')
+        self._defined_callables = self._collect_defined_callables(text)
         if len(self._block_state) != len(self._lines) + 1:
             self._rebuild_all()
         self._dirty = False
@@ -696,6 +812,7 @@ class LispLexer(QsciLexerCustom):
         self._text = text
         self._text_bytes = text.encode('utf-8')
         self._lines = text.split('\n')
+        self._defined_callables = self._collect_defined_callables(text)
         self._rebuild_all()
         self._dirty = True
 

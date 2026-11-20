@@ -20,6 +20,7 @@ from Solar.widgets.code_editor import CodeEditor
 from Solar.widgets.terminal import TerminalWidget
 from Solar.widgets.diagnostics_widget import DiagnosticsWidget
 from Solar.widgets.symbols_widget import SymbolsWidget
+from Solar.widgets.lsp_servers_widget import LspServersWidget
 from Solar.widgets.file_icons import file_icon_for_path, load_ui_icon
 from Solar.widgets.qt_utils import find_ancestor, sync_tab_data
 
@@ -90,7 +91,7 @@ class DraggableTabBar(QTabBar):
             widget if isinstance(widget, CodeEditor) else None)
 
     def _tab_icon(self, index: int, fg: QColor) -> QIcon:
-        """Иконка вкладки: язык файла, консоль, диагностики или символы."""
+        """Иконка вкладки: язык файла, консоль, диагностики, символы или LSP."""
         widget = self._tab_widget(index)
         if isinstance(widget, TerminalWidget):
             return load_ui_icon("console", fg)
@@ -98,6 +99,8 @@ class DraggableTabBar(QTabBar):
             return load_ui_icon("diagostics", fg)
         if isinstance(widget, SymbolsWidget):
             return load_ui_icon("Symbols", fg)
+        if isinstance(widget, LspServersWidget):
+            return load_ui_icon("lsp", fg)
         editor = self._tab_editor(index)
         if editor is not None:
             return file_icon_for_path(editor.file_path, fg)

@@ -22,7 +22,8 @@
     "brace_mismatch_background": "#f2c7cf",
     "brace_mismatch_foreground": "#b84a66",
     "error": "#d05771",
-    "warning": "#e2a34f"
+    "warning": "#e2a34f",
+    "inline_hint_background": "#eae2e5"
   },
   "terminal": {
     "black": "#453741",
@@ -136,11 +137,17 @@
     "type": {
       "color": "#6f97b3"
     },
-  "type_parameter": {"color": "#c17897", "italic": true},
+    "type_parameter": {
+      "color": "#c17897",
+      "italic": true
+    },
     "function_name": {
       "color": "#a79ad2"
     },
-    "macro_function": {"color": "#9e6b47", "bold": true},
+    "macro_function": {
+      "color": "#9e6b47",
+      "bold": true
+    },
     "variable": {
       "color": "#7a6472"
     },

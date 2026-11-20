@@ -20,7 +20,8 @@
     "brace_match_background": "#2a3a4a",
     "brace_mismatch_background": "#c86a6a",
     "error": "#c86a6a",
-    "warning": "#d4a84a"
+    "warning": "#d4a84a",
+    "inline_hint_background": "#1e1f2b"
   },
   "terminal": {
     "black": "#262638",
@@ -107,7 +108,10 @@
     "function_name": {
       "color": "#d4a84a"
     },
-    "macro_function": {"color": "#4aa6d4", "bold": true},
+    "macro_function": {
+      "color": "#4aa6d4",
+      "bold": true
+    },
     "variable": {
       "color": "#d4d0d4"
     },
@@ -118,7 +122,10 @@
       "color": "#5a8aba",
       "bold": true
     },
-  "type_parameter": {"color": "#c08ac0", "italic": true},
+    "type_parameter": {
+      "color": "#c08ac0",
+      "italic": true
+    },
     "modifier": {
       "color": "#e8a87a",
       "italic": true

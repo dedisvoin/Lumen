@@ -21,7 +21,8 @@
     "error": "#e68c8c",
     "warning": "#e2bf7a",
     "menu_background": "#2a302a",
-    "menu_foreground": "#dfecdf"
+    "menu_foreground": "#dfecdf",
+    "inline_hint_background": "#1f281f"
   },
   "terminal": {
     "black": "#182018",
@@ -106,7 +107,10 @@
     "function_name": {
       "color": "#c8d96c"
     },
-    "macro_function": {"color": "#8d62d9", "bold": true},
+    "macro_function": {
+      "color": "#8d62d9",
+      "bold": true
+    },
     "variable": {
       "color": "#9acc8c"
     },
@@ -116,7 +120,10 @@
     "type": {
       "color": "#7dc4e4"
     },
-  "type_parameter": {"color": "#c6a0f6", "italic": true},
+    "type_parameter": {
+      "color": "#c6a0f6",
+      "italic": true
+    },
     "modifier": {
       "color": "#b0a5f0",
       "italic": true

@@ -56,6 +56,7 @@ class ErrorLensOverlay(QObject):
         self._err = QColor(_ERR_DARK)
         self._warn = QColor(_WARN_DARK)
         self._hint = QColor(_HINT_DARK)
+        self._hint_bg = None
         self._caret = QColor(_CARET_DARK)
         self._dark = True
         self._hint_font_cache = None
@@ -259,6 +260,7 @@ class ErrorLensOverlay(QObject):
         """Блок-заливка или рамка диапазона токена (Ctrl/hover).
 
         outline=True — только обводка без заливки (Ctrl-токен).
+        Поддерживает диапазоны, пересекающие переносы строк.
         """
         if not rng:
             return
@@ -266,26 +268,36 @@ class ErrorLensOverlay(QObject):
         if end is None or end <= start:
             return
         try:
-            line = ed.SendScintilla(SCI_LINEFROMPOSITION, start)
             first = ed.SendScintilla(SCI_GETFIRSTVISIBLELINE)
             visible = ed.SendScintilla(SCI_LINESONSCREEN)
-            if not (first - 1 <= line <= first + visible + 1):
-                return
-            sh_s = self._ctrl_shift(ed, line, start)
-            sh_e = self._ctrl_shift(ed, line, end - 1)
-            x0 = ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, start) + sh_s
-            x1 = (ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, end - 1)
-                  + sh_e + (ed.SendScintilla(SCI_TEXTWIDTH, 0, b"0") or 1))
-            y = ed.SendScintilla(SCI_POINTYFROMPOSITION, 0, start)
+            start_line = ed.SendScintilla(SCI_LINEFROMPOSITION, start)
+            end_line = ed.SendScintilla(SCI_LINEFROMPOSITION, max(end - 1, start))
             col = QColor(color) if color is not None else QColor(self._hint)
             col.setAlpha(alpha)
-            w = int(max(x1 - x0, 2))
-            if outline:
-                p.setPen(QPen(col, 1))
-                p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawRect(int(x0), int(y), w, line_h - 1)
-            else:
-                p.fillRect(int(x0), int(y), w, line_h, col)
+            char_w = ed.SendScintilla(SCI_TEXTWIDTH, 0, b"0") or 1
+            for line in range(start_line, end_line + 1):
+                if not (first - 1 <= line <= first + visible + 1):
+                    continue
+                line_start = ed.SendScintilla(SCI_POSITIONFROMLINE, line)
+                line_end_text = ed.SendScintilla(SCI_GETLINEENDPOSITION, line)
+                seg_s = max(start, line_start)
+                seg_e = end if line == end_line else line_end_text
+                if seg_e <= seg_s:
+                    continue
+                end_pos = seg_e - 1
+                sh_s = self._ctrl_shift(ed, line, seg_s)
+                sh_e = self._ctrl_shift(ed, line, end_pos)
+                x0 = ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, seg_s) + sh_s
+                x1 = (ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, end_pos)
+                      + sh_e + char_w)
+                y = ed.SendScintilla(SCI_POINTYFROMPOSITION, 0, seg_s)
+                w = int(max(x1 - x0, 2))
+                if outline:
+                    p.setPen(QPen(col, 1))
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.drawRect(int(x0), int(y), w, line_h - 1)
+                else:
+                    p.fillRect(int(x0), int(y), w, line_h, col)
         except Exception:
             pass
 
@@ -320,7 +332,7 @@ class ErrorLensOverlay(QObject):
             pass  # редактор уничтожен
 
     def apply_theme(self, dark, hint_color=None, error_color=None,
-                    warning_color=None):
+                    warning_color=None, hint_bg_color=None):
         """Цвета текста по типу темы; цвета из темы или дефолты."""
         self._dark = dark
         self._err = (QColor(error_color) if error_color
@@ -329,6 +341,7 @@ class ErrorLensOverlay(QObject):
                       else QColor(_WARN_DARK if dark else _WARN_LIGHT))
         self._hint = (QColor(hint_color) if hint_color
                       else QColor(_HINT_DARK if dark else _HINT_LIGHT))
+        self._hint_bg = QColor(hint_bg_color) if hint_bg_color else None
         self._caret = QColor(_CARET_DARK if dark else _CARET_LIGHT)
         self._style_cache = {}
         self.refresh()
@@ -434,7 +447,8 @@ class ErrorLensOverlay(QObject):
                 or (ed.hasSelectedText() and self._line_has_selection(ed, line))):
             return 0
 
-        bg = self._line_bg(ed, line)
+        line_bg = self._line_bg(ed, line)
+        hint_bg = QColor(self._hint_bg) if self._hint_bg is not None else None
         caret = ed.SendScintilla(SCI_GETCURRENTPOS)
         caret_line = ed.SendScintilla(SCI_LINEFROMPOSITION, caret)
         x_end = ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, line_end)
@@ -444,24 +458,32 @@ class ErrorLensOverlay(QObject):
         first_pos = None
         hint_widths = []   # (позиция, ширина) сдвигающих подсказок
         for pos, text in hints:
+            p.setFont(hf)
+            hw = p.fontMetrics().horizontalAdvance(text)
             if pos >= line_end:  # подсказка в конце строки — без сдвига
                 x = ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, pos)
-                p.setFont(hf)
+                if hint_bg is not None:
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(hint_bg)
+                    p.drawRect(int(x), int(y), int(hw), line_h)
                 p.setPen(QPen(hc))
-                p.drawText(int(x), int(y) + fm.ascent(), text)
+                p.drawText(int(x), int(y) + p.fontMetrics().ascent(), text)
                 continue
             x = ed.SendScintilla(SCI_POINTXFROMPOSITION, 0, pos) + cum
-            hw = fm.horizontalAdvance(text)
             hint_widths.append((pos, hw))
             if first_pos is None:
                 first_pos = pos
-            # Перекрыть «хвост» строки фоном, нарисовать подсказку и сдвинуть
+            # Маскируем остаток строки фоном строки, чтобы поверх
+            # отрисовать подсказку и сдвинутый хвост без артефактов.
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(bg)
+            p.setBrush(line_bg)
             p.drawRect(int(x), int(y), int((x_end + cum) - x + 4), line_h)
-            p.setFont(hf)
+            # Фон самой inline-подсказки — только под её текстом.
+            if hint_bg is not None:
+                p.setBrush(hint_bg)
+                p.drawRect(int(x), int(y), int(hw), line_h)
             p.setPen(QPen(hc))
-            p.drawText(int(x), int(y) + fm.ascent(), text)
+            p.drawText(int(x), int(y) + p.fontMetrics().ascent(), text)
             self._draw_shifted_tail(p, ed, line, pos, x + hw, y)
             cum += hw
 

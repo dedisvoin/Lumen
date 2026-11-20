@@ -290,6 +290,7 @@ class ThemeColors:
     editor_bg: Optional[str] = None
     title_bar_bg: Optional[str] = None
     inlay_hint: Optional[str] = None
+    inline_hint_background: Optional[str] = None
     error: Optional[str] = None
     warning: Optional[str] = None
     dark: bool = True
@@ -311,6 +312,7 @@ class ThemeColors:
             editor_bg=colors.get("editor_background"),
             title_bar_bg=colors.get("title_bar_background"),
             inlay_hint=colors.get("inlay_hint"),
+            inline_hint_background=colors.get("inline_hint_background"),
             error=colors.get("error"),
             warning=colors.get("warning"),
             dark=is_dark_theme(theme),
@@ -340,6 +342,13 @@ class ThemeColors:
         """Цвет inlay-подсказок из темы (None — использовать дефолт)."""
         if self.inlay_hint:
             return QColor(self.inlay_hint)
+        return None
+
+    @property
+    def inline_hint_background_color(self) -> Optional[QColor]:
+        """Фон inlay-подсказок из темы (None — использовать fallback)."""
+        if self.inline_hint_background:
+            return QColor(self.inline_hint_background)
         return None
 
     @property

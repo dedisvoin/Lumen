@@ -16,7 +16,8 @@
     "border": "#f4ede8",
     "brace_mismatch_background": "#b05030",
     "error": "#c05030",
-    "warning": "#c89040"
+    "warning": "#c89040",
+    "inline_hint_background": "#eee3da"
   },
   "terminal": {
     "black": "#3a322e",
@@ -37,37 +38,120 @@
     "bright_white": "#e8ddd8"
   },
   "styles": {
-    "default": {"color": "#2a2420", "background": "#f5ede6", "font": "JetBrains Mono", "size": 12, "bold": false, "italic": false},
-    "keyword": {"color": "#8a4a70", "bold": true},
-    "string": {"color": "#4a7a40"},
-    "string_char": {"color": "#4a7a40"},
-    "string_single": {"color": "#4a7a40"},
-    "string_triple": {"color": "#4a7a40"},
-    "string_tripledouble": {"color": "#4a7a40"},
-    "number": {"color": "#b08030"},
-    "comment": {"color": "#a89080", "italic": true},
-    "commentline": {"color": "#a89080", "italic": true},
-    "commentdoc": {"color": "#a89080", "italic": false},
-    "commentlinedoc": {"color": "#a89080", "italic": true},
-    "commentblock": {"color": "#a89080", "italic": true},
-    "operator": {"color": "#3a9a8a"},
-    "preprocessor": {"color": "#c05030"},
-    "class_name": {"color": "#3a7a9a", "bold": true},
-    "namespace": {"color": "#3a7a9a"},
-    "function_name": {"color": "#b06030"},
-    "macro_function": {"color": "#2b789e", "bold": true},
-    "variable": {"color": "#2a2420"},
-    "self": {"color": "#3a9a8a"},
-    "type": {"color": "#3a7a9a", "bold": true},
-  "type_parameter": {"color": "#8a4a70", "italic": true},
-    "modifier": {"color": "#c89040", "italic": true},
-    "directive": {"color": "#c05030"},
-    "literal": {"color": "#3a7a9a"},
-    "special": {"color": "#c89040"},
-    "escape": {"color": "#8a4a70"},
-    "define_macro": {"color": "#c05030", "underline": true},
-    "comment_doc": {"color": "#8a4a70", "italic": false},
-    "comment_question": {"color": "#c89040", "italic": true},
-    "dunder_method": {"color": "#3a7a9a"}
+    "default": {
+      "color": "#2a2420",
+      "background": "#f5ede6",
+      "font": "JetBrains Mono",
+      "size": 12,
+      "bold": false,
+      "italic": false
+    },
+    "keyword": {
+      "color": "#8a4a70",
+      "bold": true
+    },
+    "string": {
+      "color": "#4a7a40"
+    },
+    "string_char": {
+      "color": "#4a7a40"
+    },
+    "string_single": {
+      "color": "#4a7a40"
+    },
+    "string_triple": {
+      "color": "#4a7a40"
+    },
+    "string_tripledouble": {
+      "color": "#4a7a40"
+    },
+    "number": {
+      "color": "#b08030"
+    },
+    "comment": {
+      "color": "#a89080",
+      "italic": true
+    },
+    "commentline": {
+      "color": "#a89080",
+      "italic": true
+    },
+    "commentdoc": {
+      "color": "#a89080",
+      "italic": false
+    },
+    "commentlinedoc": {
+      "color": "#a89080",
+      "italic": true
+    },
+    "commentblock": {
+      "color": "#a89080",
+      "italic": true
+    },
+    "operator": {
+      "color": "#3a9a8a"
+    },
+    "preprocessor": {
+      "color": "#c05030"
+    },
+    "class_name": {
+      "color": "#3a7a9a",
+      "bold": true
+    },
+    "namespace": {
+      "color": "#3a7a9a"
+    },
+    "function_name": {
+      "color": "#b06030"
+    },
+    "macro_function": {
+      "color": "#2b789e",
+      "bold": true
+    },
+    "variable": {
+      "color": "#2a2420"
+    },
+    "self": {
+      "color": "#3a9a8a"
+    },
+    "type": {
+      "color": "#3a7a9a",
+      "bold": true
+    },
+    "type_parameter": {
+      "color": "#8a4a70",
+      "italic": true
+    },
+    "modifier": {
+      "color": "#c89040",
+      "italic": true
+    },
+    "directive": {
+      "color": "#c05030"
+    },
+    "literal": {
+      "color": "#3a7a9a"
+    },
+    "special": {
+      "color": "#c89040"
+    },
+    "escape": {
+      "color": "#8a4a70"
+    },
+    "define_macro": {
+      "color": "#c05030",
+      "underline": true
+    },
+    "comment_doc": {
+      "color": "#8a4a70",
+      "italic": false
+    },
+    "comment_question": {
+      "color": "#c89040",
+      "italic": true
+    },
+    "dunder_method": {
+      "color": "#3a7a9a"
+    }
   }
 }

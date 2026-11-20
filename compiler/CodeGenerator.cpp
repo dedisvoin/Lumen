@@ -1384,8 +1384,6 @@ CodeGenUnit(AbstractTreeT tree, bool dbg = false,
                 return s;
             }
             case NodeTypes::NodeFunctionDeclaration:
-                // top-level С„СѓРЅРєС†РёРё СЂРµРіРёСЃС‚СЂРёСЂСѓСЋС‚СЃСЏ РІ РїСЂРµРїР°СЃСЃРµ Рё СЌРјРёС‚СЏС‚СЃСЏ РѕС‚РґРµР»СЊРЅРѕ;
-                // РІР»РѕР¶РµРЅРЅС‹Рµ вЂ” Р·Р°РјС‹РєР°РЅРёРµ РІ env (Р»РµРєСЃ-Р·Р°С…РІР°С‚ РїРѕ СЃРЅРёРјРєСѓ РєРѕРЅС‚РµРєСЃС‚Р°)
                 return inFn ? emitNestedFn(static_cast<struct NodeFunctionDeclaration*>(node)) : "";
             case NodeTypes::NodeBinaryAssignment: {
                 auto* n = static_cast<struct NodeBinaryAssignment*>(node);
@@ -2694,17 +2692,15 @@ case NodeTypes::NodeStructDeclaration:
 
     String emitFn(struct NodeFunctionDeclaration* fn, const String& cpp,
                   const String& ns = String(), const String& owner = String()) {
-        if (dbg) std::cout << "         " << Style("+ ", TerminalStyle::BRIGHT_GREEN) << "[cg::fn] " << cpp << " (owner=" << (owner.empty() ? "top" : owner) << ")" << std::endl;
+        if (dbg) std::cout << "         " << Style("+ ", TerminalStyle::BRIGHT_GREEN) 
+        << "[cg::fn] " << cpp << " (owner=" << (owner.empty() ? "top" : owner) << ")" << std::endl;
         String s = "static rt::Box " + cpp + "(rt::Ctx ctx, const std::vector<rt::Box>& args_) {";
         s += fnBody(fn, ns, owner);
         s += "\n    return rt::Box::null();\n}";
         return s;
     }
 
-    // РІР»РѕР¶РµРЅРЅР°СЏ С„СѓРЅРєС†РёСЏ вЂ” Р·Р°РјС‹РєР°РЅРёРµ (Р»РµРєСЃ-Р·Р°С…РІР°С‚ РєР°Рє РІ РёРЅС‚РµСЂРїСЂРµС‚Р°С‚РѕСЂРµ: func.captured).
-    // РџР°СЂР°РјРµС‚СЂС‹ РѕР±СЉС‘РјР»СЋС‰РµР№ С„СѓРЅРєС†РёРё вЂ” C++-Р»РѕРєР°Р»СЊРЅС‹Рµ: РєРѕРїРёСЂСѓРµРј РёС… РІ ctx, Р·Р°С‚РµРј СЃРЅРёРјР°РµРј
-    // СЃРЅРёРјРѕРє РєРѕРЅС‚РµРєСЃС‚Р° Рё РєР»Р°РґС‘Рј РІ env Р·Р°РјС‹РєР°РЅРёРµ rt::Box::clos. РўРµР»Рѕ Р·Р°РјС‹РєР°РЅРёСЏ РІРёРґРёС‚
-    // СЃРЅРёРјРѕРє РїРѕ parent-С†РµРїРѕС‡РєРµ (ctx -> cap -> РѕР±СЉС‘РјР»СЋС‰РёР№ РєРѕРЅС‚РµРєСЃС‚ -> РіР»РѕР±Р°Р»СЊРЅС‹Р№).
+
     String emitNestedFn(struct NodeFunctionDeclaration* fn) {
         String s;
         for (const String& pm : curParms)

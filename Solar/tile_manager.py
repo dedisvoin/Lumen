@@ -20,6 +20,7 @@ from Solar.widgets.code_editor import CodeEditor
 from Solar.widgets.terminal import TerminalWidget
 from Solar.widgets.diagnostics_widget import DiagnosticsWidget
 from Solar.widgets.symbols_widget import SymbolsWidget
+from Solar.widgets.lsp_servers_widget import LspServersWidget
 from Solar.lsp.manager import get_lsp_manager
 from Solar.scintilla_constants import (
     SCI_GETCURRENTPOS, SCI_INSERTTEXT, SCI_DELETERANGE, SCI_EMPTYUNDOBUFFER,
@@ -497,6 +498,10 @@ class TileManager:
                             if i == cur:
                                 active = n
                             tabs.append({"type": "symbols"})
+                        elif isinstance(widget, LspServersWidget):
+                            if i == cur:
+                                active = n
+                            tabs.append({"type": "lsp_servers"})
                         else:
                             continue
                         n += 1
@@ -512,6 +517,20 @@ class TileManager:
     def restore(self, tree: Optional[dict]):
         """Восстанавливает дерево панелей из сессии."""
         old_panes = self._panes
+
+        # Сначала отвязываем старые панели от LSP, чтобы при создании новых
+        # редакторов (тот же URI при восстановлении тех же файлов)
+        # unregister старого экземпляра не снёс регистрацию/документ нового.
+        manager = get_lsp_manager()
+        for pane in old_panes:
+            try:
+                if self._is_pane_alive(pane):
+                    for editor in pane.get_all_editors():
+                        manager.unregister_editor(editor)
+            except RuntimeError:
+                continue
+        manager.shutdown_unused_sessions()
+
         self._panes = []
         self.active_editor = None
 
@@ -527,17 +546,6 @@ class TileManager:
             pane.add_editor()
             self._panes.append(pane)
             new_splitter.addWidget(pane)
-
-        # Отвязываем старые панели от LSP
-        manager = get_lsp_manager()
-        for pane in old_panes:
-            try:
-                if self._is_pane_alive(pane):
-                    for editor in pane.get_all_editors():
-                        manager.unregister_editor(editor)
-            except RuntimeError:
-                continue
-        manager.shutdown_unused_sessions()
 
         # Замена корневого сплиттера
         self.layout.removeWidget(self._main_splitter)
@@ -644,6 +652,13 @@ def _restore_tab(pane: EditorPane, tab: dict,
             pane.tabs.setTabText(idx, os.path.basename(path))
             pane._sync_tab_data(editor)
             _mark_modified(editor)
+            # file_path was assigned after add_editor/set_language, so the
+            # initial LSP attach bailed out (no path). Reattach so restored
+            # modified buffers register with cl-lsp and get hover/completion.
+            bridge = getattr(editor, "_lsp_bridge", None)
+            if bridge is not None:
+                bridge.detach()
+                bridge.attach()
         elif content:
             _mark_modified(editor)
     else:

@@ -248,8 +248,13 @@ class LspManager(QObject):
         uri = self._by_editor.pop(id(editor), None)
         if uri is None:
             return
-        entry = self._docs.pop(uri, None)
-        if entry is not None:
+        entry = self._docs.get(uri)
+        # Документ по URI мог быть уже перерегистрирован другим экземпляром
+        # редактора (тот же файл, напр. пересоздан при restore) — не сносим
+        # чужую регистрацию и не закрываем документ на сервере, если им
+        # владеет другой editor.
+        if entry is not None and entry[0] is editor:
+            self._docs.pop(uri, None)
             entry[1].did_close(uri)
 
     def shutdown_unused_sessions(self):

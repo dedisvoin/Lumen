@@ -820,13 +820,14 @@ class MainWindow(FramelessWindow):
         self._sym_toggle_btn.setToolTip("Show/Hide Symbols")
         self._sym_toggle_btn.setIconSize(QSize(16, 16))
         self._sym_toggle_btn.toggled.connect(self._on_sym_toggle)
-        # Кнопка списка LSP-серверов (иконка lsp.svg в цветах темы): меню со
-        # всеми запущенными/ошибочными/не стартовавшими серверами + логами.
+        # Кнопка списка LSP-серверов (иконка lsp.svg в цветах темы): вкладка со
+        # списком серверов и логами (как Diagnostics).
         self._lsp_servers_btn = _StatusBarToggleButton(self._statusbar)
-        self._lsp_servers_btn.setCheckable(False)
+        self._lsp_servers_btn.setCheckable(True)
+        self._lsp_servers_btn.setChecked(False)
         self._lsp_servers_btn.setToolTip("LSP Servers")
         self._lsp_servers_btn.setIconSize(QSize(16, 16))
-        self._lsp_servers_btn.clicked.connect(self._show_lsp_servers_menu)
+        self._lsp_servers_btn.toggled.connect(self._on_lsp_servers_toggle)
 
         _StatusBarButtonSizer(
             self._statusbar,
@@ -950,6 +951,7 @@ class MainWindow(FramelessWindow):
         # Состояние кнопки диагностик тоже не входит в кэш: вкладка может
         # открыться/закрыться мимо кнопки (Ctrl+M, крестик, смена панели)
         self._sync_diagnostics_btn()
+        self._sync_lsp_servers_btn()
         # Состояние кнопки символов — аналогично (Ctrl+L, крестик, сессия)
         self._sync_symbols_btn()
         # Версию Python показываем только на питоновском табе
@@ -1036,7 +1038,7 @@ class MainWindow(FramelessWindow):
             act = menu.addAction(f"{server} — {lang}: {state}")
             act.setToolTip(err or f"{server} — {lang}: {state}")
             act.triggered.connect(
-                lambda st=st: self._show_lsp_server_log(st))
+                lambda checked=False, st=st: self._show_lsp_server_log(st))
         logs_act = menu.addAction("Show logs of the active server")
         logs_act.triggered.connect(self._show_lsp_server_log_for_current)
         menu.exec(self._lsp_servers_btn.mapToGlobal(QPoint(0, 0)))
@@ -1119,9 +1121,20 @@ class MainWindow(FramelessWindow):
         # Иконка: ярче при открытой вкладке, темнее при закрытой
         self._diag_toggle_btn.setIcon(self._diag_icon(checked))
 
+    def _on_lsp_servers_toggle(self, checked: bool):
+        if checked:
+            self._open_lsp_servers()
+        else:
+            self._close_all_lsp_servers()
+        self._lsp_servers_btn.setIcon(self._lsp_icon(checked))
+
     def _any_diagnostics_open(self) -> bool:
         """Открыта ли вкладка диагностик хотя бы в одной панели."""
         return any(p.has_diagnostics_tab()
+                   for p in self.tile_manager.panes())
+
+    def _any_lsp_servers_open(self) -> bool:
+        return any(p.has_lsp_servers_tab()
                    for p in self.tile_manager.panes())
 
     def _open_diagnostics(self):
@@ -1136,6 +1149,16 @@ class MainWindow(FramelessWindow):
         if pane:
             pane.add_diagnostics_tab()
 
+    def _open_lsp_servers(self):
+        for pane in self.tile_manager.panes():
+            idx = pane._find_lsp_servers_tab()
+            if idx is not None:
+                pane.tabs.setCurrentWidget(pane.tabs.widget(idx))
+                return
+        pane = self.tile_manager.get_active_pane()
+        if pane:
+            pane.add_lsp_servers_tab()
+
     def _close_all_diagnostics(self):
         """Закрыть вкладки диагностик во всех панелях."""
         for pane in list(self.tile_manager.panes()):
@@ -1147,6 +1170,17 @@ class MainWindow(FramelessWindow):
                     pane._close_tab(idx)
             except RuntimeError:
                 # Панель удалена при закрытии последней вкладки
+                break
+
+    def _close_all_lsp_servers(self):
+        for pane in list(self.tile_manager.panes()):
+            try:
+                while True:
+                    idx = pane._find_lsp_servers_tab()
+                    if idx is None:
+                        break
+                    pane._close_tab(idx)
+            except RuntimeError:
                 break
 
     def _sync_diagnostics_btn(self):
@@ -1162,12 +1196,25 @@ class MainWindow(FramelessWindow):
             btn.blockSignals(False)
             btn.setIcon(self._diag_icon(active))
 
+    def _sync_lsp_servers_btn(self):
+        active = self._any_lsp_servers_open()
+        btn = self._lsp_servers_btn
+        if btn.isChecked() != active:
+            btn.blockSignals(True)
+            btn.setChecked(active)
+            btn.blockSignals(False)
+        btn.setIcon(self._lsp_icon(active))
+
     def _diag_icon(self, active: bool) -> QIcon:
         """Иконка кнопки диагностик: яркая при открытой вкладке, приглушённая —
         при закрытой."""
         alpha = 255 if active else 120
         return load_ui_icon("diagostics",
                             QColor(self._diag_icon_color), alpha)
+
+    def _lsp_icon(self, active: bool) -> QIcon:
+        alpha = 255 if active else 120
+        return load_ui_icon("lsp", QColor(self._lsp_icon_color), alpha)
 
     def _toggle_symbols_tab(self):
         """Ctrl+L: вкладка списка символов активного файла (повтор — закрыть)."""
@@ -1799,7 +1846,7 @@ class MainWindow(FramelessWindow):
                 tc.error_color or QColor(fg)).pixmap(14, 14))
         self.status_warn_icon.setPixmap(
             load_ui_icon(
-                "warning-bold",
+                "warning-boldlzz",
                 tc.warning_color or QColor(fg)).pixmap(14, 14))
 
         #  нопка показа/скрытия дерева в статус-баре
@@ -1828,8 +1875,10 @@ class MainWindow(FramelessWindow):
 
         # Кнопка списка LSP-серверов в статус-баре (иконка lsp.svg в цветах
         # темы; hover-подсветка как у кнопок-переключателей)
+        self._lsp_icon_color = QColor(fg)
         self._lsp_servers_btn.set_hover_color(tree_hover)
-        self._lsp_servers_btn.setIcon(load_ui_icon("lsp", QColor(fg)))
+        self._lsp_servers_btn.setIcon(
+            self._lsp_icon(self._lsp_servers_btn.isChecked()))
         self._lsp_servers_btn.setCursor(
             Qt.CursorShape.PointingHandCursor)
 

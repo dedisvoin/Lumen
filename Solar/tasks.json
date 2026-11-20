@@ -41,7 +41,7 @@
   },
   {
     "name": "Run Lisp",
-    "commands": "sbcl --script @AT_FILE",
+    "commands": "cls\nsbcl --script @AT_FILE",
     "type": "Command"
   }
 ]

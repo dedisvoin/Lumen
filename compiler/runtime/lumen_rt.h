@@ -134,40 +134,33 @@ static inline double fromhalf(unsigned short h) {
 }
 
 struct Box {
-    enum Tag { T_NULL, T_i8, T_i16, T_i32, T_i64, T_f16, T_f32, T_f64, T_BOOL, T_CHAR, T_STR, T_ARR, T_TUP, T_FN, T_CLOSURE, T_TYPE, T_STRUCTTYPE, T_STRUCT, T_PTR, T_REF, T_REFI } t = T_NULL;
+    enum Tag { T_NULL, T_i8, T_i16, T_i32,
+               T_i64, T_f16, T_f32, T_f64, T_BOOL, 
+               T_CHAR, T_STR, T_ARR, T_TUP, T_FN, T_CLOSURE,
+               T_TYPE, T_STRUCTTYPE, T_STRUCT,
+               T_PTR, T_REF, T_REFI } t = T_NULL;
     long long    i = 0;
     double       f = 0;
     bool         b = false;
     char32_t     c = 0;
     std::string  s;
     std::vector<Box> items;
-    FnPtr        fp = nullptr;
-    std::shared_ptr<ClosFn> cl;   // замыкание (вложенная функция): захваченный контекст внутри лямбды
-    // структура: имя типа + поля (shared_map: копии Box разделяют состояние -> write-back)
+    FnPtr fp = nullptr;
+    std::shared_ptr<ClosFn> cl; 
+    
     std::string  tname;
+    
     std::shared_ptr<std::map<std::string, Box>> sm;
-    // объявленные типы generic-полей структуры (для typeis): имя поля -> канонич. тип.
-    // Заполняется только у инстансов, чьи поля зависят от generic-параметров структуры.
     std::shared_ptr<std::map<std::string, std::string>> fdecl;
-    // указатель (new): одно значение-носитель
+
     std::shared_ptr<Box> heap;
-    // ссылка-алиас (ref let / ref-параметр / ref-возврат): носитель = общая ячейка
     std::shared_ptr<Box> sp;
-    // ссылка-индекс (ref let x = a[i]): ячейка-носитель контейнера + индекс.
-    // Резолвится на каждый доступ через текущий контейнер (безопасно при переназначении).
-    long long refi = 0;
     std::shared_ptr<Box> host;
-    // виртуальный адрес в арене (new/ptr): последовательные адреса, как VirtualHeap
-    // интерпретатора. -1 = указатель без адреса (&var), арифметика к нему не применима.
-    long long addr = -1;
-    // namespace-литерал: захваченная область видимости (параметры/локалы/глобалы).
-    // Резерв для чтения ns::member после выхода из функции, как parent-цепочка
-    // интерпретатора. У обычных структур == nullptr (поле неактивно).
     std::shared_ptr<Ctx> scope;
-    // модификаторы ОБЪЯВЛЕНИЯ, переносимые значением: заполняется у ref-аргументов
-    // (ref-параметр), чтобы `mod(param, ref)` внутри функции видел модификаторы
-    // аргумента из места вызова. 0 у всех прочих значений.
+
     long long mods = 0;
+    long long addr = -1;
+    long long refi = 0;
 
     static Box null()           { Box v; v.t = T_NULL; return v; }
     static Box i8 (long long x) { Box v; v.t = T_i8;  v.i = x; return v; }
@@ -182,7 +175,11 @@ struct Box {
     static Box str(std::string x){ Box v; v.t = T_STR; v.s = std::move(x); return v; }
     static Box arr(std::vector<Box> x){ Box v; v.t = T_ARR; v.items = std::move(x); return v; }
     static Box tup(std::vector<Box> x){ Box v; v.t = T_TUP; v.items = std::move(x); return v; }
-    static Box fn(FnPtr x)      { Box v; v.t = T_FN;  v.fp = x; return v; }
+    
+    static Box fn(FnPtr x) { 
+        Box v; v.t = T_FN;  v.fp = x; return v; 
+    }
+    
     static Box clos(ClosFn f)   { Box v; v.t = T_CLOSURE; v.cl = std::make_shared<ClosFn>(std::move(f)); return v; }
     static Box typ(const std::string& tn) { Box v; v.t = T_TYPE; v.s = tn; return v; }
     static Box struct_type(const std::string& tn) { Box v; v.t = T_STRUCTTYPE; v.s = tn; return v; }
@@ -194,12 +191,16 @@ struct Box {
         return v;
     }
     static Box ptr(Box x) { Box v; v.t = T_PTR; v.addr = (x.t >= T_i8 && x.t <= T_i64) ? x.i : -1; v.heap = std::make_shared<Box>(std::move(x)); return v; }
-    static Box rref(std::shared_ptr<Box> p) { Box v; v.t = T_REF; v.sp = std::move(p); return v; }
+    static Box rref(std::shared_ptr<Box> p) { 
+        Box v; v.t = T_REF; v.sp = std::move(p); return v; 
+    }
     static Box refcell(Box x) { return Box::rref(std::make_shared<Box>(std::move(x))); }
 };
 
 // невладеющий shared_ptr на существующую Box-ячейку (стабильна: узлы std::map не переезжают)
-static inline std::shared_ptr<Box> refcell_ptr(Box& b) { return std::shared_ptr<Box>(&b, [](Box*){}); }
+static inline std::shared_ptr<Box> refcell_ptr(Box& b) { 
+    return std::shared_ptr<Box>(&b, [](Box*){}); 
+}
 
 // --- модификаторы объявления, переносимые значением (для `mod(refParam, m)`) ---
 // Битовая раскладка ДОЛЖНА совпадать с компилятором (DeepAnalizer/CodeGenerator).
@@ -839,7 +840,11 @@ struct Ctx {
     Ctx() {}
     explicit Ctx(Ctx* p) : parent(std::shared_ptr<Ctx>(p, [](Ctx*){})) {}
     explicit Ctx(std::shared_ptr<Ctx> p) : parent(std::move(p)) {}
-    void define(const std::string& n, Box v) { m[n] = std::move(v); }
+    
+    void define(const std::string& n, Box v) { 
+        m[n] = std::move(v); 
+    }
+    
     Box& get(const std::string& n) {
         auto it = m.find(n);
         if (it != m.end()) return it->second;
@@ -884,7 +889,7 @@ static inline const Box* scope_lookup(const Box& v, const std::string& name) {
     return u.scope ? u.scope->find(name) : nullptr;
 }
 
-// namespace-литерал: члены тела + захват видимой области.
+// namespace-литерал: элементы тела + захват видимой области.
 static inline Box nslit(Ctx& ctx, const std::string& tname,
                         std::map<std::string, Box> fields,
                         std::map<std::string, Box> captured = {}) {
@@ -910,19 +915,22 @@ static inline Box retpromote(Box v) { return Box::refcell(derefval(v)); }
 // вызов функции-значения (rt::Box::fn(...)): T_FN -> fp(ctx, args)
 static inline bool dunder_try(Ctx& ctx, const std::string& ty, const std::string& d,
                               std::vector<Box> args, Box& out); // forward (определение ниже)
+                              
 static inline Box call(Box f, Ctx& ctx, std::vector<Box> args) {
     while (f.t == Box::T_REF) { if (!f.sp) return Box::null(); f = *f.sp; }
     if (f.t == Box::T_FN && f.fp) return f.fp(ctx, std::move(args));
     if (f.t == Box::T_CLOSURE && f.cl) return (*f.cl)(ctx, std::move(args));
-    // __call__: объект структуры вызывается как функция — self = объект
+    // __call__: объект структуры вызывается как функция 
     if (f.t == Box::T_STRUCT && !f.tname.empty()) {
         args.insert(args.begin(), f);
         Box out;
-        if (dunder_try(ctx, f.tname, "__call__", std::move(args), out)) return out;
+        if (dunder_try(ctx, f.tname, "__call__", 
+        std::move(args), out)) return out;
         args.erase(args.begin());
     }
     return Box::null();
 }
+
 
 // операторные дюндеры: тип-структуры -> (dunder-имя -> [перегрузки {теги параметров, fn}])
 // Теги — типы параметров ПОСЛЕ self; рантайм выбирает перегрузку по фактическим типам
@@ -1304,7 +1312,9 @@ static inline Box cast_dispatch(Ctx& ctx, Box v, Box target) {
     if (cast_primitive_name(tn)) return cast(v, tn);
     return v;
 }
-// typeof c диспетчеризацией __typeof__
+
+
+
 static inline Box typeof_dispatch(Ctx& ctx, Box v) {
     v = derefval(v);
     if (v.t == Box::T_STRUCTTYPE) {
@@ -1312,21 +1322,13 @@ static inline Box typeof_dispatch(Ctx& ctx, Box v) {
     }
     if (v.t == Box::T_TYPE) {
         if (v.s == "StructType") return Box::struct_type("StructType");
-        // struct type name stored as T_TYPE? treat as struct type value
-        // but we now prefer T_STRUCTTYPE; keep backward compat
-        // check if it's a known struct name? not directly available; 
-        // for our new scheme, struct type values come as T_STRUCTTYPE
         return Box::typ(v.s);
     }
     if (v.t == Box::T_STRUCT) {
         Box out;
         if (dunder_try(ctx, v.tname, "__typeof__", {v}, out)) return out;
-        // typeof отдаёт type-значение (T_TYPE, зеркало интерпретатора), чтобы
-        // `typeof(x) == i64` сравнивалось с типовым литералом, а не со строкой.
         return Box::typ(tyname(v));
     }
-    // typeof отдаёт type-значение (T_TYPE, зеркало интерпретатора), чтобы
-    // `typeof(x) == i64` сравнивалось с типовым литералом, а не со строкой.
     return Box::typ(tyname(v));
 }
 // ~x — битовое НЕ (только целые, как в DeepAnalizer)

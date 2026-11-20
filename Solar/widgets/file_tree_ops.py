@@ -7,6 +7,7 @@ FileTreeOps — операции файловой системы для дере
 (меняет дерево и его состояние, эмитит его сигналы).
 """
 
+import ctypes
 import os
 import shutil
 from typing import Callable, List, Optional
@@ -25,6 +26,61 @@ def _touch(path: str):
     """Создаёт пустой файл (аналог touch)."""
     with open(path, "w", encoding="utf-8"):
         pass
+
+
+def _move_to_recycle_bin(path: str):
+    """Перемещает файл/папку в системную корзину.
+
+    На Windows используется Shell API (SHFileOperation, FOF_ALLOWUNDO).
+    На других ОС — попытка через send2trash, иначе безвозвратное удаление.
+    """
+    if os.name == "nt":
+        # SHFileOperationW expects double-null-terminated strings
+        from_path = os.path.abspath(path) + "\0\0"
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", ctypes.c_void_p),
+                ("wFunc", ctypes.c_uint),
+                ("pFrom", ctypes.c_wchar_p),
+                ("pTo", ctypes.c_wchar_p),
+                ("fFlags", ctypes.c_ushort),
+                ("fAnyOperationsAborted", ctypes.c_int),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", ctypes.c_wchar_p),
+            ]
+
+        FO_DELETE = 0x0003
+        FOF_ALLOWUNDO = 0x0040
+        FOF_NOCONFIRMATION = 0x0010
+        FOF_SILENT = 0x0004
+        FOF_NOERRORUI = 0x0400
+
+        fileop = SHFILEOPSTRUCTW()
+        fileop.hwnd = None
+        fileop.wFunc = FO_DELETE
+        fileop.pFrom = from_path
+        fileop.pTo = None
+        fileop.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION
+                         | FOF_SILENT | FOF_NOERRORUI)
+        fileop.fAnyOperationsAborted = 0
+        fileop.hNameMappings = None
+        fileop.lpszProgressTitle = None
+
+        result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop))
+        if result != 0 or fileop.fAnyOperationsAborted:
+            raise OSError(f"Failed to move to Recycle Bin (code {result})")
+        return
+
+    try:
+        from send2trash import send2trash
+        send2trash(path)
+    except Exception:
+        # Fallback: permanent delete
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
 
 
 class FileTreeOps:
@@ -154,9 +210,10 @@ class FileTreeOps:
         name = os.path.basename(path) or path
         is_dir = os.path.isdir(path)
         if is_dir:
-            message = f"Delete folder '{name}' and all its contents?"
+            message = (f"Move folder '{name}' and all its contents "
+                       f"to the Recycle Bin?")
         else:
-            message = f"Delete '{name}'?"
+            message = f"Move '{name}' to the Recycle Bin?"
         answer = themed_dialogs.question(
             self.w, "Delete", message,
             themed_dialogs.StandardButton.Yes
@@ -167,10 +224,7 @@ class FileTreeOps:
         if answer != themed_dialogs.StandardButton.Yes:
             return
         try:
-            if is_dir:
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
+            _move_to_recycle_bin(path)
         except OSError as e:
             themed_dialogs.warning(self.w, "Delete", str(e), tm, theme)
             return

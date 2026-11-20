@@ -19,6 +19,7 @@ from Solar.widgets.code_editor import CodeEditor
 from Solar.widgets.breadcrumbs import BreadcrumbsBar
 from Solar.widgets.diagnostics_widget import DiagnosticsWidget
 from Solar.widgets.symbols_widget import SymbolsWidget
+from Solar.widgets.lsp_servers_widget import LspServersWidget
 from Solar.widgets.tab_bar import DraggableTabBar
 from Solar.widgets.drop_overlay import DropOverlay
 from Solar.widgets.find_bar import FindBar
@@ -229,6 +230,33 @@ class EditorPane(QWidget):
         pane, i = found[0]
         pane.tabs.setCurrentWidget(pane.tabs.widget(i))
 
+    # --- lsp servers tab ---
+
+    def _find_lsp_servers_tab(self) -> Optional[int]:
+        for i in range(self.tabs.count()):
+            if isinstance(self._unpack(self.tabs.widget(i)), LspServersWidget):
+                return i
+        return None
+
+    def has_lsp_servers_tab(self) -> bool:
+        return self._find_lsp_servers_tab() is not None
+
+    def toggle_lsp_servers_tab(self):
+        found = []
+        for pane in self.tile_manager.panes():
+            idx = pane._find_lsp_servers_tab()
+            if idx is not None:
+                found.append((pane, idx))
+        if not found:
+            self.add_lsp_servers_tab()
+            return
+        for pane, i in found:
+            if pane.tabs.currentIndex() == i:
+                pane._close_tab(i)
+                return
+        pane, i = found[0]
+        pane.tabs.setCurrentWidget(pane.tabs.widget(i))
+
     # --- symbols tab ---
 
     def _find_symbols_tab(self) -> Optional[int]:
@@ -299,6 +327,12 @@ class EditorPane(QWidget):
         widget.warn_visibility_changed.connect(self._set_diag_show_warnings)
         return self._add_tab_widget(widget, "Diagnostics",
                                     {"type": "diagnostics"},
+                                    activate=activate)
+
+    def add_lsp_servers_tab(self, activate: bool = True) -> LspServersWidget:
+        widget = LspServersWidget(self.tile_manager, self.theme_manager)
+        return self._add_tab_widget(widget, "LSP Servers",
+                                    {"type": "lsp_servers"},
                                     activate=activate)
 
     def add_symbols_tab(self, activate: bool = True) -> SymbolsWidget:

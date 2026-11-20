@@ -44,6 +44,8 @@ class FileTreeView(QTreeWidget):
     """QTreeWidget с темизируемыми линиями дерева и drag&drop файлов."""
 
     drop_paths = pyqtSignal(list)
+    # Запрос на удаление выбранного элемента (Delete)
+    delete_requested = pyqtSignal()
     # Инлайн-редактор узла закрыт (Enter / Esc / потеря фокуса)
     edit_finished = pyqtSignal()
 
@@ -77,6 +79,13 @@ class FileTreeView(QTreeWidget):
         """Редактор узла закрыт — сообщаем панели (снять флаг режима)."""
         super().closeEditor(editor, hint)
         self.edit_finished.emit()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ---- drag & drop наружу (в панели редакторов) ----
 
@@ -224,6 +233,7 @@ class FileTreeWidget(QWidget):
         )
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
         self.tree.drop_paths.connect(self._on_drop_paths)
+        self.tree.delete_requested.connect(self._delete_current_item)
         # Инлайн-переименование: editItem + коммит через itemChanged
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.edit_finished.connect(self._on_edit_finished)
@@ -442,6 +452,16 @@ class FileTreeWidget(QWidget):
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     # ---- создание / переименование / удаление (делегаты в FileTreeOps) ----
+
+    def _delete_current_item(self):
+        """Удаляет выбранный элемент дерева (Delete): перенос в корзину."""
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path or item.parent() is None:
+            return
+        self._ops.delete_item(item, path)
 
     def _on_item_changed(self, item: QTreeWidgetItem, column: int):
         """Коммит инлайн-редактора — передаём в операции FS."""

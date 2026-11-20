@@ -21,7 +21,8 @@
     "error": "#eb6f92",
     "warning": "#f6c177",
     "menu_background": "#26233a",
-    "menu_foreground": "#e0def4"
+    "menu_foreground": "#e0def4",
+    "inline_hint_background": "#221f2e"
   },
   "terminal": {
     "black": "#191724",
@@ -49,9 +50,9 @@
       "bold": false,
       "italic": false
     },
-  "keyword": {
-    "color": "#ebbcba"
-  },
+    "keyword": {
+      "color": "#ebbcba"
+    },
     "string": {
       "color": "#f6c177"
     },
@@ -103,10 +104,13 @@
     "namespace": {
       "color": "#9ccfd8"
     },
-  "function_name": {
-    "color": "#9ccfd8"
-  },
-  "macro_function": {"color": "#d89361", "bold": true},
+    "function_name": {
+      "color": "#9ccfd8"
+    },
+    "macro_function": {
+      "color": "#d89361",
+      "bold": true
+    },
     "variable": {
       "color": "#c4a7e7"
     },
@@ -116,7 +120,10 @@
     "type": {
       "color": "#9ccfd8"
     },
-  "type_parameter": {"color": "#c4a7e7", "italic": true},
+    "type_parameter": {
+      "color": "#c4a7e7",
+      "italic": true
+    },
     "modifier": {
       "color": "#c4a7e7",
       "italic": true
