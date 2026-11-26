@@ -98,6 +98,7 @@ class CodeEditor(QsciScintilla):
         self.language_id: Optional[str] = None
         self._current_lexer: Optional[QsciLexer] = None
         self._margin_font: QFont = QFont(code_font_family(), 11)
+        self.is_read_only: bool = False
 
         self.setUtf8(True)
         self.setEolMode(QsciScintilla.EolMode.EolUnix)
@@ -804,6 +805,30 @@ class CodeEditor(QsciScintilla):
         if path and os.path.isfile(path):
             self._fs_watcher.addPath(path)
 
+    def _refresh_tab_bar(self):
+        try:
+            from PyQt6.QtWidgets import QTabWidget
+            p = self.parentWidget()
+            while p is not None:
+                if isinstance(p, QTabWidget):
+                    bar = p.tabBar()
+                    if bar is not None:
+                        bar.update()
+                    return
+                p = p.parentWidget()
+        except Exception:
+            pass
+
+    def _update_read_only_state(self, path: Optional[str]):
+        read_only = bool(path and os.path.exists(path)
+                         and not os.access(path, os.W_OK))
+        self.is_read_only = read_only
+        try:
+            self.setReadOnly(read_only)
+        except Exception:
+            pass
+        self._refresh_tab_bar()
+
     def _on_file_changed_externally(self, path: str):
         """Файл изменился на диске — перечитываем вкладку.
 
@@ -840,6 +865,7 @@ class CodeEditor(QsciScintilla):
     def load_file(self, path: str):
         self.file_path = path
         self._watch_file(path)
+        self._update_read_only_state(path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 self.setText(f.read())
@@ -901,6 +927,7 @@ class CodeEditor(QsciScintilla):
         self.setModified(False)
         # Файл мог быть пересоздан — переподписываем watcher
         self._watch_file(self.file_path)
+        self._update_read_only_state(self.file_path)
         # Перерегистрируем документ в LSP только при реальной смене пути
         # (Save As / первое сохранение), а не при обычном Ctrl+S — иначе
         # clangd пересоздаёт сессию документа на каждое сохранение.

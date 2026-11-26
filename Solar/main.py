@@ -581,7 +581,7 @@ class MainWindow(FramelessWindow):
         self.current_theme = DEFAULT_THEME
         self._dark_mode_active: Optional[bool] = None
 
-        # Недавние папки (из QSettings)
+        # Недавние папки (из settings.json)
         self._recent_folders = self._load_recent_folders()
 
         # Таски: создание/правка/запуск — отдельный контроллер
@@ -957,6 +957,8 @@ class MainWindow(FramelessWindow):
         # Версию Python показываем только на питоновском табе
         py_visible = bool(
             editor and getattr(editor, "language_id", None) == "python")
+        if py_visible and not self.status_python.text():
+            self.update_python_status()
         # Счётчики ошибок/предупреждений активного файла
         errs = warns = 0
         if editor is not None:
@@ -1306,14 +1308,30 @@ class MainWindow(FramelessWindow):
     MAX_RECENT_FOLDERS = 10
 
     def _load_recent_folders(self) -> list:
-        settings = QSettings()
-        value = settings.value("recentFolders", [])
+        value = app_settings().get("recent.folders", [])
         if isinstance(value, str):
             value = [value]
-        return [p for p in value if os.path.isdir(p)]
+        if not isinstance(value, list):
+            return []
+        folders = [p for p in value if isinstance(p, str) and os.path.isdir(p)]
+        # Миграция со старого QSettings-ключа, если в settings.json ещё пусто.
+        if not folders:
+            qs = QSettings()
+            legacy = qs.value("recentFolders", [])
+            if isinstance(legacy, str):
+                legacy = [legacy]
+            if isinstance(legacy, list):
+                folders = [p for p in legacy if isinstance(p, str) and os.path.isdir(p)]
+                if folders:
+                    folders = folders[: self.MAX_RECENT_FOLDERS]
+                    app_settings().set("recent.folders", folders)
+                    app_settings().save()
+                    qs.remove("recentFolders")
+        return folders[: self.MAX_RECENT_FOLDERS]
 
     def _save_recent_folders(self):
-        QSettings().setValue("recentFolders", self._recent_folders)
+        app_settings().set("recent.folders", self._recent_folders[: self.MAX_RECENT_FOLDERS])
+        app_settings().save()
 
     def _on_folder_opened(self, path: str):
         """Папка открыта (диалогом или из Recent) — поднимаем её в начало."""
@@ -1333,6 +1351,10 @@ class MainWindow(FramelessWindow):
 
     def _open_path(self, path: str):
         if not path:
+            return
+        existing = self.tile_manager.find_editor_by_path(path)
+        if existing is not None:
+            self.tile_manager.activate_editor(existing)
             return
         pane = self.tile_manager.get_active_pane()
         if pane:
@@ -1846,7 +1868,7 @@ class MainWindow(FramelessWindow):
                 tc.error_color or QColor(fg)).pixmap(14, 14))
         self.status_warn_icon.setPixmap(
             load_ui_icon(
-                "warning-boldlzz",
+                "warning-bold",
                 tc.warning_color or QColor(fg)).pixmap(14, 14))
 
         #  нопка показа/скрытия дерева в статус-баре

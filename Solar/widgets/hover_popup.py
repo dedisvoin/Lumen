@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget, QGraphicsDropShadowEffect,
 )
 from PyQt6.Qsci import (
-    QsciScintilla, QsciLexer, QsciLexerCPP, QsciLexerPython,
+    QsciScintilla, QsciLexer, QsciLexerCPP, QsciLexerCustom, QsciLexerPython,
     QsciLexerJava, QsciLexerJavaScript, QsciLexerXML, QsciLexerSQL,
     QsciLexerBash, QsciLexerLua, QsciLexerRuby,
 )
@@ -42,6 +42,7 @@ from Solar.scintilla_constants import (
     SCI_COLOURISE, SCI_TEXTHEIGHT, SCI_TEXTWIDTH,
 )
 from Solar.constants import SCROLLBAR_WIDTH
+from Solar.scrollbar_qss import scrollbar_qss
 from Solar.theme_utils import ThemeColors
 from Solar.text_utils import CPP_KEYWORDS, CPP_TYPES, NUMBER_PATTERN
 
@@ -336,6 +337,38 @@ class _WipeOverlay(QWidget):
         p.end()
 
 
+
+
+# --- Python lexer for doc code blocks ---
+try:
+    from Solar.lexers.python.python_def import _PY_KEYWORDS, _PY_TYPES
+except Exception:
+    _PY_KEYWORDS = ("False", "None", "True", "and", "as", "assert", "async",
+                    "await", "break", "class", "continue", "def", "del", "elif",
+                    "else", "except", "finally", "for", "from", "global", "if",
+                    "import", "in", "is", "lambda", "nonlocal", "not", "or",
+                    "pass", "raise", "return", "try", "while", "with", "yield",
+                    "match", "case")
+    _PY_TYPES = ("bool", "bytearray", "bytes", "complex", "dict", "float",
+                 "frozenset", "int", "list", "memoryview", "object", "range",
+                 "set", "slice", "str", "tuple", "type", "NoneType", "Any",
+                 "Optional", "Union", "Callable", "Iterable", "Iterator",
+                 "Sequence", "Mapping", "List", "Dict", "Set", "Tuple",
+                 "Self", "Literal", "TypeVar", "Protocol")
+
+
+class _PythonDocLexer(QsciLexerPython):
+    """QsciLexerPython с явными keywords/types для блоков кода в доках."""
+
+    def keywords(self, set_):
+        if set_ == 1:
+            return " ".join(_PY_KEYWORDS)
+        if set_ == 2:
+            # QsciLexerPython uses set 2 for highlighted identifiers (builtins/types).
+            # Include True/False/None here too for robust highlighting across QScintilla builds.
+            extras = ("True", "False", "None")
+            return " ".join(dict.fromkeys([*extras, *_PY_TYPES]))
+        return super().keywords(set_)
 class _PopupCard(QFrame):
     """Карточка содержимого попапа: рисует фон, рамку и бегунок прокрутки.
 
@@ -515,13 +548,20 @@ class HoverPopup(QFrame):
                 lexer.setFont(font, sid)
 
     def _paint_code_bg(self, lexer, view):
-        """Единый фон блока кода (чуть контрастнее фона попапа)."""
-        bg = self._tc.shade(105)
+        """Фон code-block + общий стиль скроллбаров."""
+        bg = self._tc.shade(105) if self._tc is not None else QColor("#313244")
         view.setPaper(bg)
         lexer.setDefaultPaper(bg)
         for sid in range(128):
             if lexer.description(sid):
                 lexer.setPaper(bg, sid)
+        try:
+            sb_fg = self._tc.fg_color if self._tc is not None else QColor("#cdd6f4")
+            qss = scrollbar_qss(bg.name(), sb_fg)
+            view.verticalScrollBar().setStyleSheet(qss)
+            view.horizontalScrollBar().setStyleSheet(qss)
+        except Exception:
+            pass
 
     def paintEvent(self, event):
         # Фон/рамку/бегунок рисует _PopupCard (self._card): окно прозрачно,
@@ -776,7 +816,7 @@ class HoverPopup(QFrame):
         return items
 
     def _add_text_block(self, text: str):
-        """Разбирает text-блок на заголовки, списки, разделители, параграфы."""
+        """Рендер text-блока: параграфы, списки, заголовки, doctest >>>."""
         first_para = True
         for kind, *payload in self._split_elements(text):
             if kind == "heading":
@@ -785,20 +825,23 @@ class HoverPopup(QFrame):
                 self._layout.addWidget(self._make_rule())
             elif kind == "list":
                 self._layout.addWidget(self._make_list(payload[0]))
+            elif kind == "code":
+                self._add_code_block(payload[0], payload[1] if len(payload) > 1 else "python")
+                first_para = False
             else:
                 self._layout.addWidget(self._make_label(payload[0], first_para))
                 first_para = False
 
     def _split_elements(self, text: str) -> List[Tuple[str, object]]:
-        """Строки text-блока -> элементы: heading/rule/list/para.
-
-        Идущие подряд строки склеиваются в параграф или список; пустая
-        строка закрывает текущий элемент, #/--- начинают свои.
-        """
+        """Разбор text-блока -> элементы: heading/rule/list/para/code(doctest)."""
         elements: List[Tuple[str, object]] = []
         buf: List[str] = []
         items: List[str] = []
-        for raw in text.split("\n"):
+        doctest_re = re.compile(r'^\s*(>>>|\.\.\.)\s?')
+        lines = text.split("\n")
+        i = 0
+        while i < len(lines):
+            raw = lines[i]
             stripped = raw.strip()
             if not stripped:
                 if buf:
@@ -807,7 +850,37 @@ class HoverPopup(QFrame):
                 elif items:
                     elements.append(("list", items))
                     items = []
+                i += 1
                 continue
+
+            # Doctest block in plain text: treat as python code block
+            if doctest_re.match(raw):
+                if buf:
+                    elements.append(("para", "\n".join(buf)))
+                    buf = []
+                if items:
+                    elements.append(("list", items))
+                    items = []
+                dt = [raw.rstrip()]
+                i += 1
+                while i < len(lines):
+                    nxt = lines[i]
+                    if doctest_re.match(nxt):
+                        dt.append(nxt.rstrip())
+                        i += 1
+                        continue
+                    nstr = nxt.strip()
+                    if not nstr:
+                        break
+                    if _HEADING_RE.match(nstr) or _RULE_RE.match(nstr) or _BULLET_RE.match(nxt) or _NUMBERED_RE.match(nxt):
+                        break
+                    dt.append(nxt.rstrip())
+                    i += 1
+                    if i < len(lines) and doctest_re.match(lines[i]):
+                        continue
+                elements.append(("code", "\n".join(dt), "python"))
+                continue
+
             m = _HEADING_RE.match(stripped)
             if m:
                 if buf:
@@ -819,6 +892,7 @@ class HoverPopup(QFrame):
                 elements.append(
                     ("heading", min(len(m.group(1)), 3), m.group(2).strip())
                 )
+                i += 1
                 continue
             if _RULE_RE.match(stripped):
                 if buf:
@@ -828,6 +902,7 @@ class HoverPopup(QFrame):
                     elements.append(("list", items))
                     items = []
                 elements.append(("rule",))
+                i += 1
                 continue
             b = _BULLET_RE.match(raw)
             n = _NUMBERED_RE.match(raw)
@@ -836,15 +911,15 @@ class HoverPopup(QFrame):
                     elements.append(("para", "\n".join(buf)))
                     buf = []
                 items.append((b or n).group(3))
+                i += 1
                 continue
             buf.append(raw)
+            i += 1
         if items:
             elements.append(("list", items))
         elif buf:
             elements.append(("para", "\n".join(buf)))
         return elements
-
-    # --- заголовки, разделители, списки ---
 
     def _make_label_base(self) -> QLabel:
         label = QLabel(self)
@@ -1331,29 +1406,48 @@ class HoverPopup(QFrame):
     # --- блок кода ---
 
     def _lexer_for_lang(self, lang: str):
-        """Класс лексера для языка код-фенса (пустой — язык редактора)."""
+        """Класс лексера для fenced/code-block; предпочитает кастомные лексеры Solar."""
         key = lang.strip().lower()
+        aliases = {
+            "c++": "cpp", "cc": "cpp", "cxx": "cpp", "h": "cpp", "hpp": "cpp", "hxx": "cpp",
+            "py": "python", "pyw": "python", "pyi": "python",
+            "js": "javascript", "ts": "javascript", "tsx": "javascript",
+            "sh": "bash", "shell": "bash",
+            "rb": "ruby",
+            "lm": "lumenlang", "lumen": "lumenlang",
+        }
+        lang_id = aliases.get(key, key)
+        if not lang_id:
+            lang_id = getattr(self.editor, "language_id", "") or ""
+
+        try:
+            from Solar.lexers.registry import lexer_spec
+            spec = lexer_spec(lang_id)
+            if spec is not None:
+                cls = spec[1]
+                # Для Python в доках используем кастомный QsciLexerPython,
+                # чтобы гарантировать подсветку True/False/None и базовых типов.
+                if lang_id == "python":
+                    return _PythonDocLexer
+                return cls
+        except Exception:
+            pass
+
         mapping = {
-            "cpp": QsciLexerCPP, "c": QsciLexerCPP, "c++": QsciLexerCPP,
-            "cc": QsciLexerCPP, "cxx": QsciLexerCPP, "h": QsciLexerCPP,
-            "hpp": QsciLexerCPP, "hxx": QsciLexerCPP,
-            "python": QsciLexerPython, "py": QsciLexerPython,
+            "cpp": QsciLexerCPP, "c": QsciLexerCPP,
+            "python": _PythonDocLexer,
             "java": QsciLexerJava,
-            "javascript": QsciLexerJavaScript, "js": QsciLexerJavaScript,
+            "javascript": QsciLexerJavaScript,
             "xml": QsciLexerXML, "html": QsciLexerXML,
             "sql": QsciLexerSQL,
-            "bash": QsciLexerBash, "sh": QsciLexerBash,
-            "shell": QsciLexerBash,
+            "bash": QsciLexerBash,
             "lua": QsciLexerLua,
-            "ruby": QsciLexerRuby, "rb": QsciLexerRuby,
+            "ruby": QsciLexerRuby,
         }
-        if not key:
-            lid = getattr(self.editor, "language_id", "")
-            return QsciLexerPython if lid == "python" else QsciLexerCPP
-        return mapping.get(key, QsciLexerCPP)
+        return mapping.get(lang_id, _PythonDocLexer if lang_id == "python" else QsciLexerCPP)
 
     def _ensure_code_view(self, lang: str) -> QsciScintilla:
-        """Вью для кода на языке фенса; переиспользуются между показами."""
+        """View для блока кода; переиспользуется между показами."""
         lexer_cls = self._lexer_for_lang(lang)
         view = self._code_views.get(lexer_cls)
         if view is not None and not sip.isdeleted(view):
@@ -1362,28 +1456,54 @@ class HoverPopup(QFrame):
         view.setUtf8(True)
         view.setReadOnly(True)
         view.setFrameShape(QFrame.Shape.NoFrame)
-        view.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        view.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        view.setWrapMode(QsciScintilla.WrapMode.WrapNone)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        try:
+            view.SendScintilla(view.SCI_SETHSCROLLBAR, 1)
+            view.SendScintilla(view.SCI_SETVSCROLLBAR, 1)
+            view.SendScintilla(2155, 4)  # SCI_SETMARGINLEFT
+            view.SendScintilla(2157, 4)  # SCI_SETMARGINRIGHT
+        except Exception:
+            pass
         view.setCaretWidth(0)
         view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         for i in range(5):
             view.setMarginWidth(i, 0)
-        lexer = lexer_cls(view)
-        lexer.setProperty("fold", "1")
+        theme_name = self._theme_name or getattr(self.editor, "_current_theme", None) or self.editor.theme_manager.current_theme
+        theme_data = self.editor.theme_manager.themes.get(theme_name, {})
+        try:
+            is_custom = isinstance(lexer_cls, type) and issubclass(lexer_cls, QsciLexerCustom)
+        except Exception:
+            is_custom = False
+        try:
+            lexer = lexer_cls(view, theme_data) if is_custom else lexer_cls(view)
+        except TypeError:
+            lexer = lexer_cls(view)
+        try:
+            lexer.setProperty("fold", "1")
+        except Exception:
+            pass
         view.setLexer(lexer)
         self._code_views[lexer_cls] = view
         self._code_lexers[lexer_cls] = lexer
-        if self._theme_name:
-            self.editor.theme_manager.apply_theme(
-                view, self._theme_name, lexer
-            )
+        if theme_name:
+            try:
+                self.editor.theme_manager.apply_theme(view, theme_name, lexer)
+            except Exception:
+                pass
             self._apply_code_font(lexer)
             self._paint_code_bg(lexer, view)
+        try:
+            view.zoomTo(0)
+        except Exception:
+            pass
+        try:
+            view.SendScintilla(getattr(view, "SCI_SETSCROLLWIDTHTRACKING", 2516), 1)
+        except Exception:
+            pass
+        view.installEventFilter(self)
         return view
 
     def _looks_like_kind_block(self, lines: List[str]) -> bool:
@@ -1633,21 +1753,178 @@ class HoverPopup(QFrame):
                 lines = [l[indent:] for l in lines]
         code = "\n".join(lines)
         view.setText(code)
-        view.SendScintilla(SCI_COLOURISE, 0, -1)
-        fm = QFontMetrics(view.font())
-        cw = view.SendScintilla(SCI_TEXTWIDTH, 0, b"0")
-        if not cw:
-            cw = fm.horizontalAdvance("0")
-        max_len = max(len(l) for l in lines)
-        width = min(max_len * cw + 12, _CODE_MAX_WIDTH)
-        line_h = view.SendScintilla(SCI_TEXTHEIGHT, 0) or fm.height()
-        view.setFixedSize(int(width), len(lines) * line_h + 8)
+        try:
+            lang_key = (lang or "").strip().lower()
+            if lang_key in ("python", "py", "") and (">>> " in code or "... " in code):
+                self._apply_doctest_prompts(view, code)
+            else:
+                view.SendScintilla(SCI_COLOURISE, 0, -1)
+        except Exception:
+            view.SendScintilla(SCI_COLOURISE, 0, -1)
+        try:
+            view.zoomTo(0)
+        except Exception:
+            pass
+        self._update_code_view_size(view)
         view.show()
         self._layout.addWidget(view)
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, lambda v=view: self._update_code_view_size(v) if not sip.isdeleted(v) else None)
 
     # ------------------------------------------------------------------
     # показ
     # ------------------------------------------------------------------
+
+
+    def _apply_doctest_prompts(self, view: QsciScintilla, code: str):
+        """Подсветка doctest: >>> / ... как промпт, выражение - как Python."""
+        lines = code.splitlines()
+        prompt_spans = []  # (byte_start, byte_len)
+        has_prompt = False
+        shadow_lines = []
+        off = 0
+        for idx, line in enumerate(lines):
+            m = re.match(r'^(\s*)(>>> |\.\.\. )', line)
+            if m:
+                has_prompt = True
+                pstart = len(m.group(1).encode('utf-8'))
+                plen = len(m.group(2).encode('utf-8'))
+                prompt_spans.append((off + pstart, plen))
+                shadow_lines.append(line[:m.end()].replace('>', ' ').replace('.', ' ') + line[m.end():])
+            else:
+                shadow_lines.append(line)
+            off += len(line.encode('utf-8')) + (1 if idx < len(lines) - 1 else 0)
+        if not has_prompt:
+            return
+        shadow = "\n".join(shadow_lines)
+        try:
+            view.setText(shadow)
+            view.SendScintilla(view.SCI_COLOURISE, 0, -1)
+            code_bytes = shadow.encode('utf-8')
+            styles = [view.SendScintilla(view.SCI_GETSTYLEAT, i) for i in range(len(code_bytes))]
+            view.setText(code)
+            # apply captured styles in runs
+            if styles:
+                view.SendScintilla(view.SCI_STARTSTYLING, 0, 0)
+                i = 0
+                n = len(styles)
+                while i < n:
+                    st = styles[i]
+                    j = i + 1
+                    while j < n and styles[j] == st:
+                        j += 1
+                    view.SendScintilla(view.SCI_SETSTYLING, j - i, st)
+                    i = j
+            # overlay prompt style
+            prompt_style = getattr(QsciLexerPython, 'Comment', 1)
+            for bstart, blen in prompt_spans:
+                view.SendScintilla(view.SCI_STARTSTYLING, bstart, 0)
+                view.SendScintilla(view.SCI_SETSTYLING, blen, prompt_style)
+        except Exception:
+            try:
+                view.setText(code)
+                view.SendScintilla(view.SCI_COLOURISE, 0, -1)
+            except Exception:
+                pass
+    def _code_natural_width(self, view: QsciScintilla) -> int:
+        text = view.text().splitlines() or [""]
+        font = view.font()
+        try:
+            lexer = view.lexer()
+            if lexer is not None:
+                font = lexer.font(0) or font
+        except Exception:
+            pass
+        fm = QFontMetrics(font)
+        max_px = 0
+        for ln in text:
+            max_px = max(max_px, fm.horizontalAdvance(ln.expandtabs(4)))
+        try:
+            for ln in text:
+                b = ln.expandtabs(4).encode("utf-8", errors="replace")
+                if b:
+                    w = int(view.SendScintilla(SCI_TEXTWIDTH, 0, b))
+                    if w > 0:
+                        max_px = max(max_px, w)
+        except Exception:
+            pass
+        try:
+            sw = int(view.SendScintilla(getattr(view, "SCI_GETSCROLLWIDTH", 2274)))
+            if sw > 0:
+                max_px = max(max_px, sw)
+        except Exception:
+            pass
+        # extra slack: Scintilla internal margins/frame/rounding can clip 1-2 chars
+        return max(240, max_px + 52)
+
+    def _update_code_view_size(self, view: QsciScintilla, inner_w: int | None = None):
+        lines = max(1, view.lines())
+        fm = QFontMetrics(view.font())
+        line_h = view.SendScintilla(SCI_TEXTHEIGHT, 0) or fm.height() or 16
+        margins = self._layout.contentsMargins()
+        if inner_w is None:
+            wrap_w = self._wrap.width() or (_MAX_WIDTH - 2 * self._shadow_margin)
+            inner_w = max(200, wrap_w - margins.left() - margins.right())
+        inner_w = max(120, inner_w)
+
+        natural_w = self._code_natural_width(view)
+        max_block_w = min(_CODE_MAX_WIDTH, inner_w)
+        show_v = lines > 11
+        sb_w = view.style().pixelMetric(view.style().PixelMetric.PM_ScrollBarExtent) or 14
+        # width needed to show content without horizontal scrolling
+        needed_w = natural_w + (sb_w if show_v else 0)
+        # Горизонтальный скролл только когда ширина плашки > 500px.
+        block_w = min(needed_w, max_block_w)
+        show_h = block_w > 500 and needed_w > block_w
+
+        sb_h = sb_w
+
+        width = block_w
+        if not show_h:
+            width = min(needed_w, max_block_w)
+        else:
+            width = min(max_block_w, max(501, block_w))
+
+        visible_lines = min(lines, 11) if show_v else lines
+        height = max(line_h + 10, visible_lines * line_h + 8)
+        if show_h:
+            height += sb_h
+        try:
+            view.SendScintilla(getattr(view, "SCI_SETSCROLLWIDTH", 2274), int(max(1, needed_w)))
+        except Exception:
+            pass
+
+        try:
+            view.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded if show_v else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            view.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded if show_h else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            view.SendScintilla(view.SCI_SETVSCROLLBAR, 1 if show_v else 0)
+            view.SendScintilla(view.SCI_SETHSCROLLBAR, 1 if show_h else 0)
+        except Exception:
+            pass
+
+        view.setFixedWidth(max(120, min(width, inner_w)))
+        view.setFixedHeight(max(line_h + 10, height))
+
+    def _resize_code_views(self, inner_w: int):
+        for i in range(self._layout.count()):
+            item = self._layout.itemAt(i)
+            w = item.widget() if item is not None else None
+            if isinstance(w, QsciScintilla):
+                self._update_code_view_size(w, inner_w=inner_w)
+
+    def eventFilter(self, obj, event):
+        try:
+            from PyQt6.QtCore import QEvent
+            if event.type() == QEvent.Type.Wheel and obj in self._code_views.values():
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    return True
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
 
     def _content_height(self, inner_w: int) -> int:
         """Высота контента при ширине inner_w: суммарные высоты меток
@@ -1716,7 +1993,10 @@ class HoverPopup(QFrame):
             if isinstance(widget, QsciScintilla):
                 # у кодовых вью зафиксирован размер (setFixedSize) —
                 # это и есть ширина; sizeHint у Qsci — огромный дефолт
-                hint = widget.width() or widget.sizeHint().width()
+                hint = self._code_natural_width(widget)
+                if widget.lines() > 11:
+                    hint += (widget.style().pixelMetric(widget.style().PixelMetric.PM_ScrollBarExtent) or 14)
+                hint = min(hint, _CODE_MAX_WIDTH)
             else:
                 hint = widget.sizeHint().width()
             if hint > content_w:
@@ -1726,15 +2006,17 @@ class HoverPopup(QFrame):
         inner_w = max(
             _MIN_WIDTH - 2 * _PAD_X, min(nat_w, max_w) - 2 * _PAD_X
         )
-        # Высота контента: считаем сами — QLayout.heightForWidth после
-        # первого показа видимого попапа может вернуть -1
+        self._resize_code_views(inner_w)
         h0 = self._content_height(inner_w)
 
-        # Полоса прокрутки внутри попапа: контент не сужается, а плашка
-        # расширяется — правый отступ = зазор + место под саму полосу +
-        # отступ скроллбара от правого края плашки (_SB_PAD_RIGHT).
         pad_right = _PAD_X + _SB_GAP + _SB_PAD_RIGHT if h0 > max_h else _PAD_X
         self._layout.setContentsMargins(_PAD_X, _PAD_Y, pad_right, _PAD_Y)
+
+        inner_w2 = inner_w - (pad_right - _PAD_X)
+        if inner_w2 != inner_w:
+            inner_w = max(120, inner_w2)
+            self._resize_code_views(inner_w)
+            h0 = self._content_height(inner_w)
 
         wrap_w = inner_w + _PAD_X + pad_right
         wrap_h = h0
@@ -1787,7 +2069,10 @@ class HoverPopup(QFrame):
             if widget is None:
                 continue
             if isinstance(widget, QsciScintilla):
-                hint = widget.width() or widget.sizeHint().width()
+                hint = self._code_natural_width(widget)
+                if widget.lines() > 11:
+                    hint += (widget.style().pixelMetric(widget.style().PixelMetric.PM_ScrollBarExtent) or 14)
+                hint = min(hint, _CODE_MAX_WIDTH)
             else:
                 hint = widget.sizeHint().width()
             if hint > content_w:
@@ -1797,10 +2082,17 @@ class HoverPopup(QFrame):
         inner_w = max(
             _MIN_WIDTH - 2 * _PAD_X, min(nat_w, max_w) - 2 * _PAD_X
         )
+        self._resize_code_views(inner_w)
         h0 = self._content_height(inner_w)
 
         pad_right = _PAD_X + _SB_GAP + _SB_PAD_RIGHT if h0 > max_h else _PAD_X
         self._layout.setContentsMargins(_PAD_X, _PAD_Y, pad_right, _PAD_Y)
+
+        inner_w2 = inner_w - (pad_right - _PAD_X)
+        if inner_w2 != inner_w:
+            inner_w = max(120, inner_w2)
+            self._resize_code_views(inner_w)
+            h0 = self._content_height(inner_w)
 
         wrap_w = inner_w + _PAD_X + pad_right
         wrap_h = h0
@@ -1978,7 +2270,7 @@ class HoverPopup(QFrame):
         ).contains(self.mapFromGlobal(QCursor.pos()))
 
     def under_mouse(self) -> bool:
-        """Курсор находится над попапом (чтобы не прятать его)."""
+        """Проверка: курсор над попапом (чтобы не прятать его)."""
         if not self.isVisible():
             return False
         return self.geometry().contains(self.mapFromGlobal(QCursor.pos()))

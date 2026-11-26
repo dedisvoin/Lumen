@@ -76,6 +76,31 @@ _DEFN_KEYWORDS = {
     'defun', 'defmacro', 'defgeneric', 'defmethod', 'defstruct', 'defclass',
 }
 
+# Встроенные функции Common Lisp: подсвечиваются как функция в позиции вызова,
+# даже если не определены в текущем документе.
+_BUILTIN_FUNCTIONS = {
+    'atom', 'null', 'not', 'eq', 'eql', 'equal', 'equalp',
+    'numberp', 'symbolp', 'stringp', 'listp', 'consp', 'functionp',
+    'integerp', 'floatp', 'characterp', 'vectorp', 'arrayp', 'hash-table-p',
+    'zerop', 'plusp', 'minusp', 'evenp', 'oddp',
+    'first', 'rest', 'second', 'third', 'fourth', 'fifth',
+    'nth', 'nthcdr', 'last', 'length', 'member', 'assoc', 'remove', 'find',
+    'mapcar', 'mapc', 'maplist', 'reduce', 'apply', 'funcall',
+    'append', 'reverse', 'cons', 'list', 'list*', 'car', 'cdr',
+    'caar', 'cadr', 'cdar', 'cddr',
+    'format', 'print', 'prin1', 'princ', 'terpri', 'fresh-line',
+    'read', 'read-line', 'write', 'write-line',
+    'load', 'compile', 'compile-file', 'eval', 'error', 'warn', 'signal',
+    'make-instance', 'slot-value', 'typep', 'subtypep',
+    'values', 'nth-value', 'floor', 'ceiling', 'truncate', 'round',
+    'gensym', 'intern', 'symbol-name', 'symbol-function', 'symbol-value',
+    'make-hash-table', 'gethash', 'remhash',
+    'make-array', 'aref', 'svref',
+    'concatenate', 'subseq', 'sort', 'stable-sort', 'merge',
+    'copy-list', 'copy-seq', 'copy-tree',
+    'string=', 'string<', 'string>', 'char=', 'char<', 'char>',
+}
+
 # Точные совпадения: арифметика/сравнение, которые не являются словами
 _OPERATOR_SYMBOLS = {
     '+', '-', '*', '/', '=', '/=', '<', '<=', '>', '>=', '1+', '1-',
@@ -543,11 +568,11 @@ class LispLexer(QsciLexerCustom):
             elif '::' in word or (':' in word and word[0] != ':'):
                 style = self.STYLE_PACKAGE
             elif last_sig == '(':
-                # Первый элемент формы подсвечиваем как функцию только если
-                # имя определено как функция/макрос в этом документе.
+                # Первый элемент формы подсвечиваем как функцию если имя
+                # определено в документе или является встроенной CL-функцией.
                 # Целиком цитируемые списки '(...) стилизуются как STYLE_SPECIAL
                 # раньше, поэтому их содержимое сюда не попадает.
-                if word in self._defined_callables:
+                if word in self._defined_callables or word in _BUILTIN_FUNCTIONS:
                     style = self.STYLE_FUNCTION
                 else:
                     style = self.STYLE_VARIABLE

@@ -1,5 +1,5 @@
 {
-  "name": "Build and Run",
-  "commands": "clang @AT_FILE -o @AT_FILE_NAME.exe\n@AT_FILE_NAME.exe\nCMD: del @AT_FILE_NAME.exe",
-  "type": "C++/C"
+  "name": "Run",
+  "commands": "python @AT_FILE",
+  "type": "Python"
 }

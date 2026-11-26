@@ -321,17 +321,22 @@ class LspManager(QObject):
             return None
         return bool(entry[1].ready)
 
-    def request_completion(self, editor, position: dict, callback):
+    def request_completion(self, editor, position: dict, callback,
+                           trigger_kind: int = 1,
+                           trigger_character: Optional[str] = None):
         entry = self._entry(editor)
         if entry is None:
             callback(None)
             return
         uri, session = entry
+        context = {"triggerKind": int(trigger_kind or 1)}
+        if trigger_character:
+            context["triggerCharacter"] = trigger_character
         session.request(
             "textDocument/completion",
             {"textDocument": {"uri": uri},
              "position": position,
-             "context": {"triggerKind": 1}},
+             "context": context},
             lambda result: callback(normalize_completion(result)),
         )
 
@@ -362,6 +367,19 @@ class LspManager(QObject):
             "data": {"uri": uri, "repStart": prefix_pos,
                      "prefixLen": prefix_len},
         }
+        session.request(
+            "completionItem/resolve", item,
+            lambda result: callback(
+                result if isinstance(result, dict) else None),
+        )
+
+    def request_completion_item_resolve(self, editor, item: dict, callback):
+        """Стандартный completionItem/resolve для LSP-серверов."""
+        entry = self._entry(editor)
+        if entry is None or not isinstance(item, dict):
+            callback(None)
+            return
+        _uri, session = entry
         session.request(
             "completionItem/resolve", item,
             lambda result: callback(

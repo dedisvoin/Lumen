@@ -82,5 +82,9 @@
   "lsp.lumen.hover": true,
   "lsp.lumen.inlay_hints": true,
   "lsp.lumen.deep_analysis": true,
-  "shortcuts.view.symbols": "Ctrl+Q"
+  "shortcuts.view.symbols": "Ctrl+Q",
+  "recent.folders": [
+    "C:\\Users\\Ivan\\Desktop\\Lumen",
+    "D:\\AAAAAA\\informatic\\semestr_5\\EVM\\LB5"
+  ]
 }

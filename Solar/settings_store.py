@@ -94,6 +94,7 @@ DEFAULTS: dict = {
     "lsp.lumen.hover": True,
     "lsp.lumen.inlay_hints": True,
     "themes.current": "",
+    "recent.folders": [],
 }
 
 # Шорткаты (shortcuts.<id>) — из реестра editor/shortcuts.py

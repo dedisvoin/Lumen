@@ -45,6 +45,7 @@ from Solar.scintilla_constants import (
 from Solar.widgets.qt_utils import find_ancestor
 from Solar.widgets.hover_popup import HoverPopup
 from Solar.widgets.signature_popup import SignaturePopup
+from Solar.lexers.asm.asm_docs import get_asm_doc_text
 from Solar.widgets.error_lens import ErrorLensOverlay
 from Solar.themed_dialogs import input_text
 from Solar.settings_store import app_settings
@@ -571,28 +572,21 @@ class LspEditorBridge(QObject):
             # ответит «токеном рядом» (pyright: hover последнего вызова)
             if self._hover_lit_range is None:
                 self._hover_timer.stop()
-            if not self.attached:
+            lang = getattr(self.editor, "language_id", "")
+            if not self.attached and lang != "asm":
                 return
             popup = self._hover_popup
             if not (pos == self._hover_pos
                     and popup is not None and popup.isVisible()):
                 if popup is not None and popup.isVisible():
-                    # Попап прячем не сразу: пока мышь «идёт» на плашку
-                    # прокрутить её, не исчезаем
                     if popup.near_cursor():
                         self._cancel_hide()
                     else:
                         self._schedule_hide()
                 self._hover_pos = pos
-                # Мышь ушла на новый токен — ответы прежних запросов
-                # больше не применяем (см. _on_hover)
                 self._hover_req += 1
-                # LSP-запрос — только когда под мышью реально есть токен:
-                # на пробеле, в конце строки и в пустой зоне сервер
-                # отвечает «токеном рядом» (pyright на конце строки с
-                # вызовом возвращает hover функции) — фантомный попап
                 if self._hover_lit_range is not None and (
-                        self._config and self._config.hover):
+                        (self._config and self._config.hover) or lang == "asm"):
                     self._hover_timer.start(_HOVER_DELAY_MS)
             elif popup is not None and popup.isVisible():
                 # Тот же токен — попап не прячем,
@@ -1543,14 +1537,50 @@ class LspEditorBridge(QObject):
 
     # --- hover (тип/сигнатура под курсором) ---
 
+    def _asm_hover_fallback(self) -> Optional[str]:
+        ed = self.editor
+        if getattr(ed, "language_id", "") != "asm":
+            return None
+        pos = self._hover_pos
+        if pos < 0 or pos >= ed.SendScintilla(SCI_GETLENGTH):
+            return None
+        style = ed.SendScintilla(SCI_GETSTYLEAT, pos)
+        if style in (1, 2, 4):  # comment, block comment, string
+            return None
+        line = ed.SendScintilla(SCI_LINEFROMPOSITION, pos)
+        line_start = ed.SendScintilla(SCI_POSITIONFROMLINE, line)
+        line_text = ed.text(line)
+        col = min(max(pos - line_start, 0), len(line_text))
+        word_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.@$?#")
+        start = col
+        while start > 0 and line_text[start - 1] in word_chars:
+            start -= 1
+        end = col
+        while end < len(line_text) and line_text[end] in word_chars:
+            end += 1
+        token = line_text[start:end].strip()
+        if not token:
+            return None
+        text = get_asm_doc_text(token)
+        return text or None
+
     def _hover_request(self):
+        lang = getattr(self.editor, "language_id", "")
         if not self.attached:
+            if lang == "asm" and self._hover_lit_range is not None:
+                req_id = self._hover_req + 1
+                self._hover_req = req_id
+                self._on_hover(req_id, self._asm_hover_fallback())
             return
-        # Hover-тултипы выключены в настройках (настраивается на LSP)
+        # Hover-�'�?�>�'����< �?�<��>�?�ؐ�?�< �? �?���?�'�?�?������: (�?���?�'�?����?����'�?�? �?�� LSP)
         if not (self._config and self._config.hover):
+            if lang == "asm" and self._hover_lit_range is not None:
+                req_id = self._hover_req + 1
+                self._hover_req = req_id
+                self._on_hover(req_id, self._asm_hover_fallback())
             return
-        # Токен под мышью мог исчезнуть (мышь ушла в пустую зону, файл
-        # изменился) — запрос по «пустой» позиции не нужен
+        # ���?���? ���?�? �?�<�?�?�? �?�?�? ��?�ؐ���?�?�'�? (�?�<�?�? �?�?�>�� �? ���?�?�'�?�? ���?�?�?, �"�����>
+        # ����?��?��>�?�?) �?" �������?�?�? ���? �<���?�?�'�?���> ���?����Ő�� �?�� �?�?���?
         if self._hover_lit_range is None:
             return
         req_id = self._hover_req + 1
@@ -1568,8 +1598,8 @@ class LspEditorBridge(QObject):
             self.hide_popup()
             return
         if not text:
-            # Сервер не отвечает на числовые/символьные литералы C/C++ —
-            # определяем тип токена сами
+            text = self._asm_hover_fallback()
+        if not text:
             text = self._literal_hover_fallback()
         if not text:
             self.hide_popup()
@@ -1688,8 +1718,18 @@ class LspEditorBridge(QObject):
         if popup is None:
             return
         sigs = result["signatures"]
-        active = min(max(0, result.get("active") or 0), len(sigs) - 1)
-        param = result.get("param") or 0
+        active = min(max(0, int(result.get("active") or 0)), len(sigs) - 1)
+        sig = sigs[active] if sigs else {}
+        param = result.get("param", sig.get("active_param", 0))
+        try:
+            param = int(param)
+        except (TypeError, ValueError):
+            param = 0
+        params = sig.get("params") or []
+        if params:
+            param = max(0, min(param, len(params) - 1))
+        else:
+            param = 0
         self._sig_signatures = sigs
         self._sig_active = active
         self._sig_param = param
@@ -1697,11 +1737,19 @@ class LspEditorBridge(QObject):
         popup.show_at_caret(ed)
 
     def _sig_cycle(self, delta):
-        """Стрелки вверх/вниз: следующая перегрузка сигнатуры."""
+        """Перелистать вперёд/назад: следующая/предыдущая перегрузка."""
         if not self._sig_signatures:
             return
         n = len(self._sig_signatures)
         self._sig_active = (self._sig_active + delta) % n
+        sig = self._sig_signatures[self._sig_active]
+        param = sig.get("active_param", self._sig_param)
+        params = sig.get("params") or []
+        try:
+            param = int(param)
+        except (TypeError, ValueError):
+            param = 0
+        self._sig_param = max(0, min(param, len(params) - 1)) if params else 0
         popup = self._sig_popup
         if popup is None:
             return

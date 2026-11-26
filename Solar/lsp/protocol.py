@@ -196,52 +196,85 @@ def hover_text(result) -> Optional[str]:
     return None
 
 
-def normalize_signature_help(result) -> Optional[dict]:
-    """SignatureHelp -> {active, param, signatures} для попапа сигнатуры.
-
-    signatures: [{label, doc, params: [(name, start, end)]}], где start/end —
-    индексы параметра внутри label (для подсветки активного). У параметра
-    label может быть строкой — тогда ищем первое вхождение в label сигнатуры.
-    """
-    if not isinstance(result, dict):
-        return None
-    sigs = []
-    for s in result.get("signatures") or []:
-        if not isinstance(s, dict):
-            continue
-        label = s.get("label") or ""
-        params = []
-        for p in s.get("parameters") or []:
-            if not isinstance(p, dict):
-                continue
-            pl = p.get("label")
-            if isinstance(pl, list) and len(pl) == 2:
-                start, end = int(pl[0]), int(pl[1])
-            elif isinstance(pl, str) and pl:
-                start = label.find(pl)
-                end = start + len(pl) if start >= 0 else -1
-            else:
-                start = end = -1
-            params.append((p.get("name") or "", start, end))
-        sigs.append({
-            "label": str(label),
-            "doc": _plain_doc(s.get("documentation")),
-            "params": params,
-        })
-    if not sigs:
-        return None
-    return {
-        "active": int(result.get("activeSignature") or 0),
-        "param": int(result.get("activeParameter") or 0),
-        "signatures": sigs,
-    }
-
-
-def _plain_doc(doc) -> str:
+def _doc_value(doc) -> str:
     """documentation из LSP: строка или MarkupContent {kind, value} -> текст."""
     if isinstance(doc, dict):
         return doc.get("value") or ""
     return str(doc or "")
+
+
+def _plain_doc(doc) -> str:
+    """Совместимый plain-text вариант документации."""
+    return _doc_value(doc)
+
+
+def normalize_signature_help(result) -> Optional[dict]:
+    """SignatureHelp -> {active, param, signatures} для попапа сигнатуры.
+
+    signatures: [{label, doc, params: [(name, start, end, doc)]}], где start/end —
+    границы параметра внутри label (для подсветки активного). У параметров
+    label может быть строкой — тогда ищем фрагмент в label сигнатуры.
+    """
+    if not isinstance(result, dict):
+        return None
+    sigs = []
+    global_param = int(result.get("activeParameter") or 0)
+    for s in result.get("signatures") or []:
+        if not isinstance(s, dict):
+            continue
+        label = str(s.get("label") or "")
+        params = []
+        search_from = 0
+        for p in s.get("parameters") or []:
+            if not isinstance(p, dict):
+                continue
+            pl = p.get("label")
+            start = end = -1
+            if isinstance(pl, list) and len(pl) == 2:
+                try:
+                    start, end = int(pl[0]), int(pl[1])
+                except (TypeError, ValueError):
+                    start = end = -1
+                if 0 <= start < end <= len(label):
+                    search_from = end
+                else:
+                    start = end = -1
+            elif isinstance(pl, str) and pl:
+                # Ищем от предыдущего параметра, чтобы не подсветить
+                # одноимённый фрагмент раньше по строке.
+                idx = label.find(pl, search_from)
+                if idx < 0:
+                    idx = label.find(pl)
+                if idx >= 0:
+                    start, end = idx, idx + len(pl)
+                    search_from = end
+            params.append((
+                str(p.get("name") or (pl if isinstance(pl, str) else "")),
+                start, end,
+                _doc_value(p.get("documentation")),
+            ))
+        sig_active = s.get("activeParameter")
+        active_param = int(sig_active) if sig_active is not None else global_param
+        if params:
+            active_param = max(0, min(active_param, len(params) - 1))
+        else:
+            active_param = 0
+        sigs.append({
+            "label": label,
+            "doc": _doc_value(s.get("documentation")),
+            "params": params,
+            "active_param": active_param,
+        })
+    if not sigs:
+        return None
+    active = int(result.get("activeSignature") or 0)
+    active = max(0, min(active, len(sigs) - 1))
+    param = sigs[active].get("active_param", global_param)
+    return {
+        "active": active,
+        "param": int(param),
+        "signatures": sigs,
+    }
 
 
 def normalize_symbols(result, lines=None) -> List[Tuple[str, int, int, int]]:

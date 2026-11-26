@@ -4254,7 +4254,7 @@ if (left.T == Ty::Type_ && right.T == Ty::Type_) {
                     if (!str.empty()) {
                         int hl = echo_node->end.position.line;
                         int hc = echo_node->end.position.index + echo_node->end.position.size;
-                        String hlabel(" ");
+                        String hlabel(" -> ");
                         hlabel += str;
                         inlay_hints.push_back({hl, hc, hlabel});
                     }
@@ -6562,4 +6562,3 @@ void operator()() {
     }
 
 };
-

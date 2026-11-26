@@ -392,6 +392,12 @@ class EditorPane(QWidget):
     def add_editor(self, file_path: Optional[str] = None,
                    content: str = "",
                    language_id: Optional[str] = None) -> CodeEditor:
+        if file_path and not content:
+            existing = self.tile_manager.find_editor_by_path(file_path)
+            if existing is not None:
+                self.tile_manager.activate_editor(existing)
+                return existing
+
         editor = CodeEditor(self.lexer_manager, self.theme_manager)
         editor.file_path = file_path
         if file_path:
@@ -627,7 +633,11 @@ class EditorPane(QWidget):
                     if zone == "center":
                         self.add_editor(file_path=path)
                     else:
-                        self.tile_manager.split_pane(self, zone, file_path=path)
+                        existing = self.tile_manager.find_editor_by_path(path)
+                        if existing is not None:
+                            self.tile_manager.activate_editor(existing)
+                        else:
+                            self.tile_manager.split_pane(self, zone, file_path=path)
 
         self._overlay.set_indicator(None)
         event.acceptProposedAction()

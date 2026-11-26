@@ -152,6 +152,29 @@ class TileManager:
         self._clean_dead_panes()
         return list(self._panes)
 
+    @staticmethod
+    def _norm_path(path: str) -> str:
+        return os.path.normcase(os.path.abspath(path))
+
+    def find_editor_by_path(self, file_path: str) -> Optional[CodeEditor]:
+        """Находит открытый редактор с указанным путём в любой панели."""
+        if not file_path:
+            return None
+        target = self._norm_path(file_path)
+        for pane in self.panes():
+            for editor in pane.get_all_editors():
+                path = getattr(editor, "file_path", None)
+                if path and self._norm_path(path) == target:
+                    return editor
+        return None
+
+    def activate_editor(self, editor: CodeEditor) -> bool:
+        """Активирует вкладку редактора в любой панели."""
+        for pane in self.panes():
+            if pane.activate_editor(editor):
+                return True
+        return False
+
     def _refresh_pane_borders(self):
         """Пересчитывает рамки панелей после split/close/restore.
 
@@ -241,12 +264,28 @@ class TileManager:
 
         self._panes.append(new_pane)
 
+        existing_editor = None
         if file_path:
-            new_pane.add_editor(file_path=file_path)
+            existing_editor = self.find_editor_by_path(file_path)
+            if existing_editor is not None:
+                self.activate_editor(existing_editor)
+            else:
+                new_pane.add_editor(file_path=file_path)
         elif data:
             new_pane._move_or_copy_tab(data, source)
         else:
             new_pane.add_editor()
+
+        # Если файл уже был открыт, новая панель остаётся пустой — удаляем её.
+        if new_pane.tabs.count() == 0:
+            if new_pane in self._panes:
+                self._panes.remove(new_pane)
+            new_pane.setParent(None)
+            new_pane.deleteLater()
+            self._remove_empty_splitters(self._main_splitter)
+            self._update_splitter_sizes()
+            self._refresh_pane_borders()
+            return None
 
         self._remove_empty_splitters(self._main_splitter)
         self._update_splitter_sizes()

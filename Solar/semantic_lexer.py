@@ -188,6 +188,10 @@ class SemanticLexer(QsciLexerCustom):
         self._string_res.append(re.compile(rb'"(?:\\.|[^"\\\n])*"'))
         self._char_re = re.compile(rb"'(?:\\.|[^'\\\n])*'")
         self._preproc_re = re.compile(rb"(?m)^[ \t]*#\w+")
+        # #include <...> / #include_next <...> / #import <...> — угловые
+        # скобки в C/C++ директивах включения подсвечиваются как строка.
+        self._include_angle_re = re.compile(
+            rb'(?m)^[ \t]*#[ \t]*(?:include|include_next|import)[ \t]*(<[^>\n]*>)')
         # #macro NAME — имя макрофункции (группа 1), для lumenlang-fallback
         self._macro_fn_re = re.compile(
             rb"(?m)^[ \t]*#macro[ \t]+([A-Za-z_][A-Za-z0-9_]*)")
@@ -524,6 +528,14 @@ class SemanticLexer(QsciLexerCustom):
                 if ss <= s < ee:
                     return True
             return False
+
+        if self._language == "cpp":
+            for m in self._include_angle_re.finditer(seg):
+                gs, ge = m.span(1)
+                s0 = start + gs
+                if not in_string(s0):
+                    items.append((s0, ge - gs, _STYLE_STRING, _PRIO_LEX_OVERRIDE))
+                    string_spans.append((s0, s0 + (ge - gs)))
 
         def in_comment(s):
             for cs, ce in comment_spans:

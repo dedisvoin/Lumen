@@ -1,3 +1,4 @@
+import re
 """
 AsmLexer — кастомный QsciLexerCustom для ассемблерных файлов (.asm/.s/...).
 
@@ -71,7 +72,7 @@ _INSTRUCTIONS = {
     "and", "or", "xor", "not",
     "lock", "rep", "repe", "repz", "repne", "repnz", "rex", "rexb", "rexw",
     "rexwx", "rexwb",
-    "call", "ret", "retn", "retf", "enter", "leave", "hlt", "nop", "pause",
+    "call", "invoke", "ret", "retn", "retf", "enter", "leave", "hlt", "nop", "pause",
     "syscall", "sysenter", "sysexit", "sysret", "ud2", "xbegin", "xend",
     "xabort", "bound", "int", "into", "int3",
     "jmp", "push", "pop", "pushad", "popad", "pushf", "popf", "pushfd",
@@ -102,6 +103,7 @@ for _c in _COND:
     _INSTRUCTIONS.add("set" + _c)
 for _c in ("", "e", "ne", "z", "nz"):
     _INSTRUCTIONS.add("loop" + _c)
+_INSTRUCTIONS.add("dup")
 
 _SPECIAL = {
     "fadd", "fmul", "fsub", "fsubr", "fdiv", "fdivr", "fld", "fst", "fstp",
@@ -112,7 +114,18 @@ _SPECIAL = {
     "fscale", "f2xm1", "fyl2x", "fyl2xp1", "fxtract", "fdecstp", "fincstp",
     "fxam", "fpatan", "fnstsw", "fstsw", "fnstcw", "fstcw", "fldcw",
     "fstenv", "fldenv", "fsave", "frstor", "fbld", "fbstp", "fclex",
+    "ptr", "offset", "addr", "seg", "near", "far", "short", "flat",
 }
+
+_DATA_TYPES = {
+    # NASM/MASM/GAS data size keywords
+    "byte", "word", "dword", "qword", "tbyte", "oword", "xmmword", "ymmword", "zmmword",
+    "fword", "real4", "real8", "real10",
+    "db", "dw", "dd", "dq", "dt", "df", "do", "dy", "dz",
+    "resb", "resw", "resd", "resq", "rest", "reso", "resy", "resz",
+    "sbyte", "sword", "sdword", "sqword",
+}
+_DATA_TYPES |= {f".{t}" for t in list(_DATA_TYPES)}
 
 _DIRECTIVES = {
     ".text", ".data", ".bss", ".rodata", ".section", "section", ".code",
@@ -121,16 +134,16 @@ _DIRECTIVES = {
     "extern", "public",
     ".macro", ".endmacro", ".macros", "macro", "endmacro", "endm",
     ".struct", ".ends", "struct", "ends", "struc", "endstruc", "istruc",
-    ".proc", ".endproc", "proc", "endp", ".typedef", ".enum", ".endenum",
+    ".proc", ".endproc", "proc", "endp", "end", ".end", "uses", ".typedef", ".enum", ".endenum",
     ".if", ".else", ".elseif", ".endif", ".ifdef", ".ifndef", ".ifnotdef",
     ".ifb", ".ifnb", ".ifidn", ".ifidni", ".ifstr", ".repeat", ".until",
     ".while", ".endw", ".for", ".exitm", "if", "else", "endif", "ifdef",
     "ifndef", "repeat", "until", "while", "endw",
-    ".byte", ".word", ".dword", ".qword", ".tbyte", ".oword", ".yword",
-    ".ascii", ".asciz", ".string", "db", "dw", "dd", "dq", "dt", "df",
+    ".ascii", ".asciz", ".string",
     ".equ", ".equiv", "equ", ".set", "set",
     ".align", ".balign", ".p2align", ".org", "org", "align", ".fill",
     ".space", ".skip", ".zero", ".incbin", "incbin",
+    "include", "includelib", "includeonce", ".include", ".includelib",
     "bits", "use16", "use32", "use64", ".bits", ".code16", ".code32",
     ".code64", ".model", ".assume", ".list", ".nolist", ".radix", "radix",
     ".local", "local", ".comm", "comm", ".common", ".file", ".line",
@@ -154,6 +167,9 @@ class AsmLexer(QsciLexerCustom):
     STYLE_DIRECTIVE = 8
     STYLE_LABEL = 9
     STYLE_SPECIAL = 10
+    STYLE_STRUCT = 11
+    STYLE_TYPE = 12
+    STYLE_FUNCTION = 13
 
     _STYLE_THEME_KEYS = {
         STYLE_DEFAULT: ("default", None),
@@ -162,13 +178,15 @@ class AsmLexer(QsciLexerCustom):
         STYLE_NUMBER: ("number", QColor(250, 179, 135)),
         STYLE_STRING: ("string", QColor(166, 227, 161)),
         STYLE_OPERATOR: ("operator", QColor(137, 180, 250)),
-        STYLE_REGISTER: ("type", QColor(137, 220, 235)),
+        STYLE_REGISTER: ("namespace", QColor(137, 220, 235)),
         STYLE_INSTRUCTION: ("keyword", QColor(203, 166, 247)),
         STYLE_DIRECTIVE: ("directive", QColor(243, 139, 168)),
         STYLE_LABEL: ("function_name", QColor(249, 226, 175)),
         STYLE_SPECIAL: ("special", QColor(249, 226, 175)),
+        STYLE_STRUCT: ("class_name", QColor(249, 226, 175)),
+        STYLE_TYPE: ("type", QColor(148, 226, 213)),
+        STYLE_FUNCTION: ("modifier", QColor(245, 194, 231)),
     }
-
     LINE_COMMENT = ";"
 
     def __init__(self, parent=None, theme_data: Optional[dict] = None):
@@ -179,14 +197,16 @@ class AsmLexer(QsciLexerCustom):
         self._lines: List[str] = []
         self._dirty: bool = True
         self._hooked_editor = None
-        # Слова для автодополнения («как в Lumen»): атрибуты читает
-        # CompletionEngine._collect_static_words по _COMPLETION_GROUPS
+        self._struct_names: Set[str] = set()
+        self._proc_names: Set[str] = set()
         self.keywords = _INSTRUCTIONS
         self.special_keywords = _SPECIAL | _REGISTERS
-        self.directives = _DIRECTIVES
-        self.types = _REGISTERS
+        self.directives = set(_DIRECTIVES)
+        self.types = _DATA_TYPES | _REGISTERS
         self.modifiers = set()
         self.literals = _REGISTERS
+        self.structs = set()
+        self.functions = set()
         self.setup_styles()
 
     def language(self) -> str:
@@ -208,6 +228,9 @@ class AsmLexer(QsciLexerCustom):
             self.STYLE_DIRECTIVE: "Directive",
             self.STYLE_LABEL: "Label",
             self.STYLE_SPECIAL: "FPU Instruction",
+            self.STYLE_STRUCT: "Struct",
+            self.STYLE_TYPE: "Type",
+            self.STYLE_FUNCTION: "Function",
         }
         return descriptions.get(style, "")
 
@@ -417,14 +440,21 @@ class AsmLexer(QsciLexerCustom):
                     pos = j
                     continue
 
-                if word.startswith(".") or word in _DIRECTIVES:
+                wlower = word.lower()
+                if wlower in _DATA_TYPES:
+                    style = self.STYLE_TYPE
+                elif word.startswith(".") or wlower in _DIRECTIVES or word in _DIRECTIVES:
                     style = self.STYLE_DIRECTIVE
-                elif word in _REGISTERS:
+                elif wlower in _REGISTERS or word in _REGISTERS:
                     style = self.STYLE_REGISTER
-                elif word in _INSTRUCTIONS:
+                elif wlower in _INSTRUCTIONS or word in _INSTRUCTIONS:
                     style = self.STYLE_INSTRUCTION
-                elif word in _SPECIAL:
+                elif wlower in _SPECIAL or word in _SPECIAL:
                     style = self.STYLE_SPECIAL
+                elif wlower in self._struct_names:
+                    style = self.STYLE_STRUCT
+                elif wlower in self._proc_names:
+                    style = self.STYLE_FUNCTION
                 else:
                     style = self.STYLE_DEFAULT
                 self.setStyling(j - pos, style)
@@ -496,22 +526,27 @@ class AsmLexer(QsciLexerCustom):
                 return j
             if nxt in ("b", "B"):
                 j = pos + 1 + nl
+                start_j = j
                 while j < end:
                     c, l = AsmLexer._get_char_at(text_bytes, j, total)
                     if c is not None and c in "01":
                         j += l
                     else:
                         break
-                return j
+                if j > start_j:
+                    return j
+                # иначе может быть MASM hex вида 0Bh/0FFh - разберёт общий парсер
             if nxt in ("o", "O", "q", "Q"):
                 j = pos + 1 + nl
+                start_j = j
                 while j < end:
                     c, l = AsmLexer._get_char_at(text_bytes, j, total)
                     if c is not None and c in "01234567":
                         j += l
                     else:
                         break
-                return j
+                if j > start_j:
+                    return j
 
         # Десятичное / шестнадцатеричное с буквами / суффикс h/b/d/o/q
         if ch.isdigit() or (ch == "." and pos + 1 < end and
@@ -562,7 +597,53 @@ class AsmLexer(QsciLexerCustom):
         self._text = text
         self._text_bytes = text.encode("utf-8")
         self._lines = text.split("\n")
+        self._struct_names = self._collect_struct_names()
+        self._proc_names = self._collect_proc_names()
+        self.structs = set(self._struct_names)
+        self.functions = set(self._proc_names)
         self._dirty = False
+
+    def _collect_struct_names(self) -> Set[str]:
+        """Собирает имена структур из объявлений NAME struct/struc и NAME ends/endstruc."""
+        names: Set[str] = set()
+        struct_kw = {"struct", "struc", ".struct"}
+        end_kw = {"ends", "endstruc", ".ends"}
+        for raw in self._lines:
+            line = raw.split(";", 1)[0]
+            line = line.split("//", 1)[0]
+            toks = line.strip().split()
+            if not toks:
+                continue
+            if len(toks) >= 2:
+                name, kw = toks[0], toks[1].lower()
+                if kw in struct_kw or kw in end_kw:
+                    if re.match(r"^[A-Za-z_.$@?#][A-Za-z0-9_.$@?#]*$", name):
+                        names.add(name)
+                        names.add(name.lower())
+            if toks[0].lower() in struct_kw and len(toks) >= 2:
+                name = toks[1]
+                if re.match(r"^[A-Za-z_.$@?#][A-Za-z0-9_.$@?#]*$", name):
+                    names.add(name)
+                    names.add(name.lower())
+        return names
+
+    def _collect_proc_names(self) -> Set[str]:
+        """Собирает имена процедур/функций из объявлений NAME proc/endp."""
+        names: Set[str] = set()
+        proc_kw = {"proc", ".proc"}
+        end_kw = {"endp", ".endproc"}
+        for raw in self._lines:
+            line = raw.split(";", 1)[0]
+            line = line.split("//", 1)[0]
+            toks = line.strip().split()
+            if len(toks) < 2:
+                continue
+            name, kw = toks[0], toks[1].lower()
+            if kw in proc_kw or kw in end_kw:
+                if re.match(r"^[A-Za-z_.$@?#][A-Za-z0-9_.$@?#]*$", name):
+                    names.add(name)
+                    names.add(name.lower())
+        return names
 
     def _count_braces(self, line: str):
         """Считает { ( [ и ) } ] в строке, игнорируя строки и комментарии."""

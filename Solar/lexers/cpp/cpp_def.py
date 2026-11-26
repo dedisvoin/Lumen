@@ -126,6 +126,7 @@ def cpp_def() -> LanguageDef:
                      "--log=error",
                      "--compile-commands-dir={workspace}"],
             root_markers=("compile_commands.json",),
+            trigger_chars={".", ":", ">", "<", '"', "/", "\\"},
             semantic_tokens=True,
             inlay_hints=True,
             keywords=CPP_KEYWORDS,

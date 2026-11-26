@@ -51,6 +51,7 @@ STYLE_MAP: Dict[Any, Dict[str, int]] = {
     QsciLexerPython: {
         "default": 0,
         "keyword": QsciLexerPython.Keyword,
+        "type": getattr(QsciLexerPython, "HighlightedIdentifier", 14),
         "string": QsciLexerPython.DoubleQuotedString,
         "string_single": QsciLexerPython.SingleQuotedString,
         "string_triple": QsciLexerPython.TripleSingleQuotedString,
@@ -339,6 +340,14 @@ class ThemeManager:
             # Для встроенных лексеров используем STYLE_MAP
             lexer_class = type(lexer)
             style_map = STYLE_MAP.get(lexer_class)
+            if style_map is None:
+                for base_cls, mapped in STYLE_MAP.items():
+                    try:
+                        if isinstance(lexer, base_cls):
+                            style_map = mapped
+                            break
+                    except Exception:
+                        continue
             if style_map is None:
                 return
 

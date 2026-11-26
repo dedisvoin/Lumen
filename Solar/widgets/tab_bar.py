@@ -25,10 +25,12 @@ from Solar.widgets.file_icons import file_icon_for_path, load_ui_icon
 from Solar.widgets.qt_utils import find_ancestor, sync_tab_data
 
 
-# ---- геометрия содержимого вкладки: кружок · название · иконка ----
-_TAB_LEFT_PAD = 10     # от левого края таба до кружка
+# ---- геометрия содержимого вкладки: кружок/замок · название · иконка ----
+_TAB_LEFT_PAD = 10     # от левого края таба до индикатора
 _TAB_DOT = 6           # диаметр кружка сохранённости
-_TAB_DOT_GAP = 6       # кружок → название
+_TAB_LOCK_SIZE = 12    # размер иконки замка (read-only)
+_TAB_LEFT_SLOT = max(_TAB_DOT, _TAB_LOCK_SIZE)
+_TAB_DOT_GAP = 6       # индикатор → название
 _TAB_ICON_GAP = 6      # название → иконка
 _TAB_ICON_SIZE = 14    # размер иконки языка/консоли
 _TAB_RIGHT_PAD = 22    # справа: место под кнопку закрытия + отступ
@@ -331,15 +333,14 @@ class DraggableTabBar(QTabBar):
     # ---- размеры ----
 
     def tabSizeHint(self, index: int) -> QSize:
-        """Ширина таба под кастомное содержимое: кружок + название + иконка.
+        """Ширина таба под кастомное содержимое: индикатор + название + иконка.
 
-        Место под кружок резервируется у всех табов всегда — чтобы ширина
-        таба не менялась при появлении/исчезновении кружка. Сам кружок
-        рисуется только при несохранённых изменениях у редакторов.
+        Место под индикатор резервируется у всех табов всегда — чтобы ширина
+        таба не менялась при появлении/исчезновении кружка или замка.
         """
         base = super().tabSizeHint(index)
         text_width = self.fontMetrics().horizontalAdvance(self.tabText(index))
-        extra = (_TAB_LEFT_PAD + _TAB_DOT + _TAB_DOT_GAP
+        extra = (_TAB_LEFT_PAD + _TAB_LEFT_SLOT + _TAB_DOT_GAP
                  + _TAB_ICON_GAP + _TAB_ICON_SIZE + _TAB_RIGHT_PAD)
         return QSize(max(extra + text_width, base.width()), base.height())
 
@@ -401,21 +402,29 @@ class DraggableTabBar(QTabBar):
 
     def _paint_tab_contents(self, painter: QPainter, index: int,
                             rect: QRect, fg: QColor):
-        """Кружок сохранённости → название → иконка языка/консоли."""
+        """Индикатор (замок/read-only или кружок modified) → название → иконка."""
         fm = self.fontMetrics()
         cy = rect.center().y()
         x = rect.left() + _TAB_LEFT_PAD
         text_top = rect.top() + (rect.height() - fm.height()) // 2
 
-        # Слот под кружок резервируется у всех табов (текст не прыгает),
-        # сам кружок рисуется только у изменённых редакторов
+        # Слот под индикатор резервируется у всех табов (текст не прыгает).
+        # Для read-only файлов показываем замок вместо кружка изменений.
         editor = self._tab_editor(index)
-        if editor is not None and editor.isModified():
-            dot_rect = QRectF(x, cy - _TAB_DOT / 2, _TAB_DOT, _TAB_DOT)
+        if editor is not None and getattr(editor, "is_read_only", False):
+            lock_icon = load_ui_icon("locker", fg)
+            if not lock_icon.isNull():
+                lock_rect = QRect(int(x + (_TAB_LEFT_SLOT - _TAB_LOCK_SIZE) / 2),
+                                  int(cy - _TAB_LOCK_SIZE / 2),
+                                  _TAB_LOCK_SIZE, _TAB_LOCK_SIZE)
+                lock_icon.paint(painter, lock_rect, Qt.AlignmentFlag.AlignCenter)
+        elif editor is not None and editor.isModified():
+            dot_rect = QRectF(x + (_TAB_LEFT_SLOT - _TAB_DOT) / 2,
+                              cy - _TAB_DOT / 2, _TAB_DOT, _TAB_DOT)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fg)
             painter.drawEllipse(dot_rect)
-        x += _TAB_DOT + _TAB_DOT_GAP
+        x += _TAB_LEFT_SLOT + _TAB_DOT_GAP
 
         # Название — полный текст. Элидируется только если таб реально сужен
         # (переполнение). Ширину считаем через left()+width(), а не right():

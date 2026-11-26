@@ -30,6 +30,7 @@ from Solar.font_settings import ui_font_family
 from Solar.settings_store import app_settings
 from Solar.lexers.lumen.lumen_lang import LumenLangLexer
 from Solar.lexers.asm.asm_lexer import AsmLexer
+from Solar.lexers.asm.asm_docs import get_asm_doc_text
 from Solar.lexers.llvm.llvm_lexer import LLVMLexer
 from Solar.theme_utils import strengthen_border
 from Solar.scrollbar_qss import scrollbar_qss
@@ -75,10 +76,10 @@ _COMPLETION_GROUPS = (
     (4, "L", "literal", "literals"),
     (5, "D", "directive", "directives"),
     (6, "S", "special word", "special_keywords"),
-    (7, "C", "struct", None),
+    (7, "C", "struct", "structs"),
     (8, "#", "macro", None),
     (9, "V", "variable", None),
-    (10, "F", "function", None),
+    (10, "F", "function", "functions"),
     (11, "S", "snippet", None),
     (12, "N", "namespace", None),
 )
@@ -148,6 +149,7 @@ _WORD_CHARS = set(
     "0123456789_#"
 )
 _LISP_WORD_CHARS = _WORD_CHARS | {"-"}
+_ASM_WORD_CHARS = _WORD_CHARS | {".", "@", "$", "?", "%"}
 
 # Директива подключения началась и каретка внутри её кавычек: показываем
 # файлы/папки по пути, а не слова языка.
@@ -632,6 +634,7 @@ class CompletionEngine:
         self._lsp_inserts: Dict[int, str] = {}
         self._lsp_text_edits: Dict[int, dict] = {}
         self._lsp_adds: Dict[int, list] = {}
+        self._lsp_items: Dict[int, dict] = {}
         self._lsp_timer = QTimer(self.editor)
         self._lsp_timer.setSingleShot(True)
         self._lsp_timer.timeout.connect(self._lsp_request)
@@ -858,6 +861,10 @@ class CompletionEngine:
         Закрывающая кавычка уже напечатана — контекст не действует.
         """
         editor = self.editor
+        # Файловое автодополнение для #include реализовано локально для Lumen.
+        # Для C/C++ и других языков пути include отдаёт LSP-сервер (clangd).
+        if (getattr(editor, "language_id", "") or "") != "lumenlang":
+            return None
         pos = editor.SendScintilla(SCI_GETCURRENTPOS)
         line = editor.SendScintilla(SCI_LINEFROMPOSITION, pos)
         line_start = editor.SendScintilla(SCI_POSITIONFROMLINE, line)
@@ -978,7 +985,12 @@ class CompletionEngine:
         """Начало слова слева от позиции (None, если не в слове)."""
         editor = self.editor
         lang = getattr(editor, "language_id", "") or ""
-        word_chars = _LISP_WORD_CHARS if lang == "lisp" else _WORD_CHARS
+        if lang == "lisp":
+            word_chars = _LISP_WORD_CHARS
+        elif lang == "asm":
+            word_chars = _ASM_WORD_CHARS
+        else:
+            word_chars = _WORD_CHARS
         line = editor.SendScintilla(SCI_LINEFROMPOSITION, pos)
         line_start = editor.SendScintilla(SCI_POSITIONFROMLINE, line)
         col = pos - line_start
@@ -1236,6 +1248,15 @@ class CompletionEngine:
         start = max(caret - prefix_len, 0)
         lang = getattr(editor, "language_id", "") or ""
         lsp_pos = pos_to_lsp(editor, start)
+        # Prefer completionItem/resolve: returns documentation for the exact
+        # selected completion item (hover on prefix pos can return wrong symbol).
+        row = self.popup.row(item) if item is not None else -1
+        raw_item = self._lsp_items.get(row) if row >= 0 else None
+        if isinstance(raw_item, dict):
+            get_lsp_manager().request_completion_item_resolve(
+                editor, raw_item,
+                lambda resolved, w=label: self._doc_on_resolve(seq, w, resolved))
+            return
         if lang == "lumenlang":
             get_lsp_manager().request_resolve(
                 editor, lsp_pos, prefix_len, label,
@@ -1251,18 +1272,34 @@ class CompletionEngine:
 
     def _doc_on_hover(self, seq, text):
         if seq != self._doc_hover_seq:
-            return  # ответ устарел — пользователь уже выбрал другой элемент
+            return  # stale response
         popup = self.popup
         item = popup.currentItem() if popup.isVisible() else None
         if item is not None:
             word = item.data(Qt.ItemDataRole.UserRole)
             if word:
-                # Кэш хранит и пустой ответ, чтобы не дёргать сервер повторно
                 self._doc_cache[word] = (text or "").strip()
         self._update_doc_panel()
 
+    def _doc_on_resolve(self, seq, word: str, resolved):
+        if seq != self._doc_hover_seq:
+            return
+        text = ""
+        if isinstance(resolved, dict):
+            text = _plain_doc(resolved.get("documentation")) or ""
+            detail = resolved.get("detail") or ""
+            if not text and detail:
+                text = str(detail)
+        popup = self.popup
+        item = popup.currentItem() if popup.isVisible() else None
+        current = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if word:
+            self._doc_cache[word] = (text or "").strip()
+        if current == word:
+            self._update_doc_panel()
+
     # ------------------------------------------------------------------
-    # LSP-дополнения (clangd): запрос и вставка
+    # LSP-completion: request/result
     # ------------------------------------------------------------------
 
     def _lsp_request(self):
@@ -1289,12 +1326,24 @@ class CompletionEngine:
                 _log.debug("lsp_completion: skip - no prefix, no trigger char")
                 self.hide_popup()
                 return
+        trigger_kind = 1
+        trigger_char = None
+        line, col = editor.getCursorPosition()
+        line_text = editor.text(line)
+        if col > 0 and col <= len(line_text):
+            ch = line_text[col - 1]
+            if ch in self._lsp_trigger_chars:
+                trigger_kind = 2
+                trigger_char = ch
+
         seq = self._lsp_seq + 1
         self._lsp_seq = seq
         get_lsp_manager().notify_change(editor)
         get_lsp_manager().request_completion(
             editor, pos_to_lsp(editor, pos),
             lambda items: self._lsp_on_result(seq, pos, prefix, items),
+            trigger_kind=trigger_kind,
+            trigger_character=trigger_char,
         )
 
     def _lsp_on_result(self, seq: int, req_pos: int, prefix: str, items):
@@ -1364,7 +1413,7 @@ class CompletionEngine:
                 if mod and label.strip().lower() in ("autoimport",
                                                       "auto-import"):
                     label = sym or label
-            rows.append((label, kind, detail, insert, te, adds, doc))
+            rows.append((label, kind, detail, insert, te, adds, doc, item))
         if not rows:
             self.hide_popup()
             return
@@ -1377,13 +1426,18 @@ class CompletionEngine:
         self._lsp_inserts = {}
         self._lsp_text_edits = {}
         self._lsp_adds = {}
+        self._lsp_items = {}
         entries = []
-        for i, (label, kind, detail, insert, te, adds, doc) in enumerate(rows):
+        for i, row in enumerate(rows):
+            label, kind, detail, insert, te, adds, doc = row[:7]
+            raw_item = row[7] if len(row) > 7 else None
             self._lsp_inserts[i] = insert
             if "range" in te:
                 self._lsp_text_edits[i] = te
             if adds:
                 self._lsp_adds[i] = adds
+            if isinstance(raw_item, dict):
+                self._lsp_items[i] = raw_item
             docs.append(doc)
             entries.append((label, kind, detail))
         popup = self.popup
@@ -1552,10 +1606,15 @@ class CompletionEngine:
         # (/, ., \ и т.д. не входят в слово языка)
         if self._include_context() is not None:
             return True
-        if self.enabled:
-            return text in _WORD_CHARS
         lang = getattr(self.editor, "language_id", "") or ""
-        word_chars = _LISP_WORD_CHARS if lang == "lisp" else _WORD_CHARS
+        if lang == "lisp":
+            word_chars = _LISP_WORD_CHARS
+        elif lang == "asm":
+            word_chars = _ASM_WORD_CHARS
+        else:
+            word_chars = _WORD_CHARS
+        if self.enabled:
+            return text in word_chars
         return text in word_chars or text in self._lsp_trigger_chars
 
     def after_edit(self):
